@@ -1,0 +1,124 @@
+PROJECT NAME:
+Ergoquipt BLE Health Ecosystem
+
+OVERVIEW:
+This project consists of two independent BLE wearable devices under the Ergoquipt brand:
+
+1) Ergoquipt HR Band
+2) Ergoquipt Tympanic Thermometer
+
+Both devices act as BLE Peripheral (GATT Server).
+Mobile application acts as BLE Central.
+
+Devices are independent and can operate separately.
+No inter-device communication is required.
+Each device has its own BLE Service UUID and Characteristic UUID.
+
+============================================================
+BLE ARCHITECTURE RULES
+============================================================
+
+1. UUID STRATEGY
+
+All units of the same product share identical UUIDs.
+Different products use different UUID namespaces.
+
+HR BAND:
+Service UUID: e0020001-7cce-4c2a-9f0b-112233445566
+Characteristic UUID: e0020002-7cce-4c2a-9f0b-112233445566
+
+TYMPANIC DEVICE:
+Service UUID: e0010001-7cce-4c2a-9f0b-112233445566
+Characteristic UUID: e0010002-7cce-4c2a-9f0b-112233445566
+
+2. BLE ROLE
+
+Both devices:
+- BLE Peripheral
+- GATT Server
+- Notify + Read property
+- Bonding enabled
+- Encryption required
+
+3. DATA FORMAT
+
+HR BAND PAYLOAD (6 bytes):
+
+Byte 0-1 : Heart Rate (uint16, little endian)
+Byte 2-3 : SpO2 x100 (uint16, little endian)
+Byte 4   : Status (bitmask)
+Byte 5   : Sequence counter (uint8)
+
+Sampling rate: 1 Hz
+
+
+TYMPANIC PAYLOAD (4 bytes):
+
+Byte 0-1 : Temperature x100 (int16, little endian)
+Byte 2   : Status (bitmask)
+Byte 3   : Sequence counter (uint8)
+
+Triggered on measurement or every 1 second (configurable).
+
+
+4. DEVICE NAMING
+
+HR Band:
+Device Name format: Ergoquipt-HR-XXX
+
+Tympanic:
+Device Name format: Ergoquipt-TEMP-XXX
+
+XXX represents last 3 digits of MAC address.
+
+
+5. STATUS BITMASK
+
+Bit 0: Sensor valid
+Bit 1: Sensor error
+Bit 2: Low battery
+Bit 3-7: Reserved
+
+
+6. PLATFORM REQUIREMENTS
+
+HR Band:
+Board: ESP32-S3
+Framework: Arduino (PlatformIO)
+Sensor: MAX30102
+
+Tympanic:
+Board: ESP32-C3
+Framework: Arduino (PlatformIO)
+Sensor: MLX90614
+
+
+7. CODE STRUCTURE REQUIREMENTS
+
+Each project must follow this structure:
+
+/src
+  main.cpp
+  ble_manager.cpp
+  ble_manager.h
+  sensor_manager.cpp
+  sensor_manager.h
+  config.h
+
+/lib
+  (sensor libraries if required)
+
+BLE logic must be separated from sensor logic.
+No sensor reading inside BLE callbacks.
+
+8. POWER & PERFORMANCE
+
+- Notify only when deviceConnected == true
+- Use 1 Hz update interval
+- Avoid dynamic memory allocation inside loop
+- Avoid blocking delay > 1000ms
+
+9. FUTURE EXTENSIBILITY
+
+Code must be modular.
+Easily extendable for OTA update in future.
