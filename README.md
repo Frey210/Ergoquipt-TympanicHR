@@ -2,7 +2,7 @@
 
 Production-oriented dual-device BLE embedded system using PlatformIO + ESP32.
 
-- Device 1: `ergoquipt_hr_band` (ESP32-S3 + MAX30102 placeholder integration)
+- Device 1: `ergoquipt_hr_band` (ESP32-S3 + MAX30102 integration)
 - Device 2: `ergoquipt_tympanic_temp` (ESP32-C3 + MLX90614 placeholder integration)
 
 Both devices are independent BLE Peripherals (GATT Servers).  
@@ -43,12 +43,12 @@ The mobile app is BLE Central.
 |---|---|---|
 | Board | ESP32-S3 (`esp32-s3-devkitc-1`) | ESP32-C3 (`esp32-c3-devkitm-1`) |
 | Framework | Arduino via PlatformIO | Arduino via PlatformIO |
-| Sensor | MAX30102 (stub placeholder in current code) | MLX90614 (stub placeholder in current code) |
+| Sensor | MAX30102 (HR + SpO2 + HRV + RR estimation) | MLX90614 (stub placeholder in current code) |
 | Role | BLE Peripheral / GATT Server | BLE Peripheral / GATT Server |
 | Properties | Read + Notify | Read + Notify |
 | Security | Bonding + encryption required | Bonding + encryption required |
 | Update interval | 1 Hz | 1 Hz (or trigger event; currently periodic 1 Hz) |
-| Payload size | 6 bytes | 4 bytes |
+| Payload size | 12 bytes | 4 bytes |
 
 ---
 
@@ -82,7 +82,7 @@ Notes:
 
 ## 4) Pinout and Wiring
 
-Current firmware uses sensor stubs and does not lock specific I2C pins yet.  
+HR band firmware uses `Wire.begin()` with default board I2C mapping unless overridden.  
 Recommended standard pin mapping for both projects:
 
 - `SDA = GPIO8`
@@ -109,54 +109,30 @@ If you choose different pins, set them in sensor init (for example with `Wire.be
 | SDA | GPIO8 | I2C data |
 | SCL | GPIO9 | I2C clock |
 
-### 4.3 Wiring Diagram (Mermaid)
-
-```mermaid
-flowchart LR
-  subgraph HR["Ergoquipt HR Band (ESP32-S3)"]
-    HRMCU["ESP32-S3 DevKitC-1"]
-    MAX["MAX30102"]
-    HRMCU -- "3V3" --> MAX
-    HRMCU -- "GND" --> MAX
-    HRMCU -- "GPIO8 (SDA)" --> MAX
-    HRMCU -- "GPIO9 (SCL)" --> MAX
-    MAX -- "INT (optional)" --> HRMCU
-  end
-
-  subgraph TMP["Ergoquipt Tympanic (ESP32-C3)"]
-    C3["ESP32-C3 DevKitM-1"]
-    MLX["MLX90614"]
-    C3 -- "3V3" --> MLX
-    C3 -- "GND" --> MLX
-    C3 -- "GPIO8 (SDA)" --> MLX
-    C3 -- "GPIO9 (SCL)" --> MLX
-  end
-```
-
 ---
 
 ## 5) BLE Specification
 
-## 5.1 Device Naming
+### 5.1 Device Naming
 
 - HR Band: `Ergoquipt-HR-XXX`
 - Tympanic: `Ergoquipt-TEMP-XXX`
 
 `XXX` is derived from the last 3 hex digits of the STA MAC (`%01X%02X` in current code).
 
-## 5.2 Service and Characteristic UUIDs
+### 5.2 Service and Characteristic UUIDs
 
-### HR Band
+#### HR Band
 
 - Service UUID: `e0020001-7cce-4c2a-9f0b-112233445566`
 - Characteristic UUID: `e0020002-7cce-4c2a-9f0b-112233445566`
 
-### Tympanic Temp
+#### Tympanic Temp
 
 - Service UUID: `e0010001-7cce-4c2a-9f0b-112233445566`
 - Characteristic UUID: `e0010002-7cce-4c2a-9f0b-112233445566`
 
-## 5.3 GATT Behavior Contract
+### 5.3 GATT Behavior Contract
 
 - Peripheral role only
 - Characteristic properties: `READ | NOTIFY`
@@ -173,7 +149,7 @@ flowchart LR
 
 This section is the integration contract for Android/iOS app developers.
 
-## 6.1 Discovery and Subscription Flow
+### 6.1 Discovery and Subscription Flow
 
 1. Scan for names prefix:
    - `Ergoquipt-HR-`
@@ -185,24 +161,30 @@ This section is the integration contract for Android/iOS app developers.
 6. Optionally perform initial `READ` for snapshot
 7. Consume notification stream at ~1 Hz
 
-## 6.2 Payload Definitions
+### 6.2 Payload Definitions
 
 All multi-byte fields are **little-endian**.
 
-### A) HR Band Payload (6 bytes)
+#### A) HR Band Payload (12 bytes)
 
 | Byte Index | Type | Field | Unit |
 |---:|---|---|---|
 | 0..1 | `uint16` | `heartRate` | bpm |
 | 2..3 | `uint16` | `spo2X100` | SpO2 percent x100 |
-| 4 | `uint8` | `status` | bitmask |
-| 5 | `uint8` | `sequence` | wraps 0..255 |
+| 4..5 | `uint16` | `rrX100` | breaths/min x100 |
+| 6..7 | `uint16` | `hrvMs` | ms (RMSSD) |
+| 8 | `uint8` | `status` | bitmask |
+| 9 | `uint8` | `battery` | 0..100 |
+| 10 | `uint8` | `sequence` | wraps 0..255 |
+| 11 | `uint8` | `reserved` | always 0 |
 
 Decode:
-- `heartRate = b0 | (b1 << 8)`
+- `hr = b0 | (b1 << 8)`
 - `spo2 = (b2 | (b3 << 8)) / 100.0`
+- `rr = (b4 | (b5 << 8)) / 100.0`
+- `hrvMs = b6 | (b7 << 8)`
 
-### B) Tympanic Payload (4 bytes)
+#### B) Tympanic Payload (4 bytes)
 
 | Byte Index | Type | Field | Unit |
 |---:|---|---|---|
@@ -214,21 +196,25 @@ Decode:
 - `tempRaw = int16(b0 | (b1 << 8))`
 - `tempC = tempRaw / 100.0`
 
-## 6.3 Status Bitmask Contract
+### 6.3 HR Band Status Bitmask Contract
 
 | Bit | Mask | Meaning |
 |---:|---:|---|
-| 0 | `0x01` | Sensor valid |
-| 1 | `0x02` | Sensor error |
-| 2 | `0x04` | Low battery |
-| 3..7 | - | Reserved |
+| 0 | `0x01` | HR valid |
+| 1 | `0x02` | SpO2 valid |
+| 2 | `0x04` | RR valid |
+| 3 | `0x08` | HRV valid |
+| 4 | `0x10` | Low battery |
+| 5 | `0x20` | Sensor error |
+| 6..7 | - | Reserved |
 
 Recommended app handling:
-- If `sensor error` bit is set, mark sample as invalid and show warning state.
-- If `low battery` bit is set, show battery warning.
-- Treat unknown reserved bits as forward-compatible metadata.
+- Validate fields using per-metric validity bits before displaying.
+- If `sensor error` is set, mark sample invalid and show warning state.
+- If `low battery` is set, show battery warning.
+- Treat reserved bits as forward-compatible metadata.
 
-## 6.4 Sequence Counter Contract
+### 6.4 Sequence Counter Contract
 
 - 8-bit unsigned counter, increments every published payload.
 - Wrap-around is expected: `255 -> 0`.
@@ -241,9 +227,9 @@ Example:
 
 ---
 
-## 7) Data Flow Diagrams (Mermaid)
+## 7) Data Flow Diagrams
 
-### 7.1 Runtime Data Flow
+### 7.1 Runtime Data Flow (HR Band)
 
 ```mermaid
 flowchart TD
@@ -253,11 +239,11 @@ flowchart TD
   D --> E{"Central Connected?"}
   E -- "No" --> D
   E -- "Yes" --> F["1 Hz Scheduler (non-blocking)"]
-  F --> G["Acquire sensor sample"]
-  G --> H["Encode payload (little-endian)"]
+  F --> G["SensorManager.update(): read MAX30102 + compute vitals"]
+  G --> H["getVitalData()"]
   H --> I{"deviceConnected == true ?"}
   I -- "No" --> F
-  I -- "Yes" --> J["setValue + notify"]
+  I -- "Yes" --> J["Build 12-byte payload + notify"]
   J --> F
 ```
 
@@ -309,9 +295,13 @@ Upload target:
 
 ## 9) Implementation Notes and Next Steps
 
-- Current sensor layers are placeholders/stubs for MAX30102 and MLX90614.
-- BLE contract is stable and ready for mobile integration.
+- HR band module currently reads MAX30102 and publishes:
+  - HR from beat-to-beat interval
+  - SpO2 estimation from AC/DC ratio
+  - HRV RMSSD from rolling IBI buffer
+  - RR estimation placeholder derived from HRV trend
+- Tympanic module remains placeholder/stub based in current code.
 - Recommended next firmware step:
-  1. Integrate real sensor drivers in each `sensor_manager.cpp`.
-  2. Add battery ADC reading and set low-battery status bit.
-  3. Add optional timestamp sync and OTA service in future revision.
+  1. Replace RR estimator placeholder with respiration extraction from PPG baseline modulation.
+  2. Add real battery ADC measurement and map to `battery` field.
+  3. Add sensor-quality index and motion artifact rejection.

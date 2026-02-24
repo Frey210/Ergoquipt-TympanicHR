@@ -4,11 +4,17 @@
 #include "config.h"
 #include "sensor_manager.h"
 
+namespace {
+
 BleManager g_bleManager;
 SensorManager g_sensorManager;
+uint32_t g_lastPublishMs = 0;
+
+}  // namespace
 
 void setup() {
   Serial.begin(115200);
+
   g_sensorManager.begin();
   g_bleManager.begin();
 
@@ -18,15 +24,15 @@ void setup() {
 
 void loop() {
   const uint32_t nowMs = millis();
-  if (!g_sensorManager.isReadyToSample(nowMs)) {
-    return;
+
+  g_sensorManager.update(nowMs);
+
+  if ((nowMs - g_lastPublishMs) >= cfg::kUpdateIntervalMs) {
+    g_lastPublishMs = nowMs;
+
+    const VitalData data = g_sensorManager.getVitalData();
+    g_bleManager.publish(data);
   }
 
-  HrSample sample{};
-  uint8_t payload[cfg::kPayloadSize] = {0};
-
-  g_sensorManager.acquireSample(nowMs, sample);
-  g_sensorManager.encodePayload(sample, payload);
-  g_bleManager.publish(payload, sizeof(payload));
+  delay(2);
 }
-
