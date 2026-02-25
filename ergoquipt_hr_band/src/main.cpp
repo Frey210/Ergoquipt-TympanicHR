@@ -29,9 +29,7 @@ void loop() {
 
   if ((nowMs - g_lastPublishMs) >= cfg::kUpdateIntervalMs) {
     g_lastPublishMs = nowMs;
-
-    const VitalData data = g_sensorManager.getVitalData();
-    g_bleManager.publish(data);
+    g_bleManager.publish(g_sensorManager.getVitalData());
   }
 
   delay(2);

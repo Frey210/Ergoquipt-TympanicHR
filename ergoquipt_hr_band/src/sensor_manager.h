@@ -5,10 +5,9 @@
 struct VitalData {
   uint16_t hr;
   uint16_t spo2_x100;
-  uint16_t rr_x100;
+  uint16_t rri_ms;
   uint16_t hrv_ms;
   uint8_t status;
-  uint8_t battery;
 };
 
 class SensorManager {
@@ -16,6 +15,9 @@ class SensorManager {
   void begin();
   void update(uint32_t nowMs);
   VitalData getVitalData() const;
+
+  uint16_t getRRInterval() const;
+  uint16_t getHRV() const;
 
  private:
   bool initMax30102();
@@ -27,22 +29,15 @@ class SensorManager {
   void processSample(uint32_t nowMs, uint32_t red, uint32_t ir);
   void updateStatus(uint32_t nowMs);
 
-  static constexpr size_t kIbiBufferSize = 20;
-
-  VitalData vital_{0, 0, 0, 0, 0, 100};
-
-  uint16_t ibiMs_[kIbiBufferSize] = {0};
-  size_t ibiHead_ = 0;
-  size_t ibiCount_ = 0;
-
   uint32_t irDc_ = 0;
   uint32_t redDc_ = 0;
   uint32_t filteredIrPrev_ = 0;
 
-  uint32_t lastBeatMs_ = 0;
-  uint32_t lastSampleMs_ = 0;
   uint32_t lastDataMs_ = 0;
 
   bool wasAboveThreshold_ = false;
   bool sensorInitialized_ = false;
+  bool invalidRriDetected_ = false;
+
+  VitalData vital_{0, 0, 0, 0, 0};
 };

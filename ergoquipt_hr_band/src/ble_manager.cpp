@@ -89,12 +89,12 @@ void BleManager::publish(const VitalData &data) {
 
   encodeLe16(payload, 0U, data.hr);
   encodeLe16(payload, 2U, data.spo2_x100);
-  encodeLe16(payload, 4U, data.rr_x100);
+  encodeLe16(payload, 4U, data.rri_ms);
   encodeLe16(payload, 6U, data.hrv_ms);
   payload[8] = data.status;
-  payload[9] = data.battery;
-  payload[10] = sequenceCounter_++;
-  payload[11] = 0U;
+  payload[9] = sequenceCounter_++;
+  payload[10] = 0x00U;
+  payload[11] = 0x00U;
 
   characteristic_->setValue(payload, sizeof(payload));
   characteristic_->notify();
