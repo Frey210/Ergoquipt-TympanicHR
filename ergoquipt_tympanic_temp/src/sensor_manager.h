@@ -15,8 +15,10 @@ class SensorManager {
   void encodePayload(const TempSample &sample, uint8_t payload[4]);
 
  private:
+  bool readObjectTemperatureX100(int16_t &temperatureX100);
+
   uint32_t lastSampleMs_ = 0;
   uint8_t sequenceCounter_ = 0;
   bool sensorInitialized_ = false;
+  int16_t lastValidTemperatureX100_ = 0;
 };
-
