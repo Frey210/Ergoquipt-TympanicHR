@@ -1,317 +1,286 @@
 # Ergoquipt BLE Health Ecosystem
 
-Production-oriented dual-device BLE embedded system using PlatformIO + ESP32.
+Repository ini berisi dua firmware embedded berbasis ESP32 untuk ekosistem pemantauan kesehatan Ergoquipt:
 
-- Device 1: `ergoquipt_hr_band` (ESP32-S3 + MAX30102 placeholder integration)
-- Device 2: `ergoquipt_tympanic_temp` (ESP32-C3 + MLX90614 placeholder integration)
+- `ergoquipt_hr_band`: wearable HR band berbasis ESP32-S3 + MAX3010x + AMOLED touch display.
+- `ergoquipt_tympanic_temp`: node termometer timpani berbasis ESP32-C3 + MLX90614.
 
-Both devices are independent BLE Peripherals (GATT Servers).  
-The mobile app is BLE Central.
+Keduanya berjalan sebagai BLE Peripheral/GATT Server dan dirancang untuk dibaca oleh aplikasi mobile sebagai BLE Central.
 
----
-
-## 1) Repository Structure
+## Repository Structure
 
 ```text
 .
+|-- README.md
+|-- Ergoquipt_BLE_System_Description.txt
 |-- ergoquipt_hr_band/
 |   |-- platformio.ini
+|   |-- lib/
+|   |   `-- max3010x_compat/
 |   `-- src/
 |       |-- main.cpp
+|       |-- config.h
 |       |-- ble_manager.cpp
 |       |-- ble_manager.h
 |       |-- sensor_manager.cpp
 |       |-- sensor_manager.h
-|       `-- config.h
-|-- ergoquipt_tympanic_temp/
-|   |-- platformio.ini
-|   `-- src/
-|       |-- main.cpp
-|       |-- ble_manager.cpp
-|       |-- ble_manager.h
-|       |-- sensor_manager.cpp
-|       |-- sensor_manager.h
-|       `-- config.h
-`-- Ergoquipt_BLE_System_Description.txt
+|       |-- ui_manager.cpp
+|       `-- ui_manager.h
+`-- ergoquipt_tympanic_temp/
+    |-- platformio.ini
+    `-- src/
+        |-- main.cpp
+        |-- config.h
+        |-- ble_manager.cpp
+        |-- ble_manager.h
+        |-- sensor_manager.cpp
+        `-- sensor_manager.h
 ```
 
----
+## System Overview
 
-## 2) Technical Summary
+### 1. HR Band
+
+HR band melakukan tiga fungsi utama secara paralel:
+
+- membaca sinyal optik MAX3010x via I2C,
+- menghitung HR, SpO2, RRI, dan HRV,
+- menampilkan data ke AMOLED via LVGL dan mengirim snapshot ke BLE.
+
+Arsitektur runtime menggunakan FreeRTOS task:
+
+- `sensorTask`: sampling sensor setiap 10 ms.
+- `bleTask`: publish payload BLE setiap 1000 ms.
+- `uiTask`: refresh UI setiap 33 ms dengan update konten setiap 1000 ms.
+
+Alur boot:
+
+1. Inisialisasi serial dan mutex I2C.
+2. Inisialisasi MAX3010x dan scan I2C.
+3. Inisialisasi BLE GATT server.
+4. Inisialisasi UI LVGL + AMOLED.
+5. Menjalankan task sensor, BLE, dan UI di core ESP32-S3.
+
+### 2. Tympanic Temp
+
+Node tympanic membaca MLX90614 melalui I2C lalu mengirim temperatur objek melalui BLE setiap 1 detik. Firmware ini lebih sederhana dan tidak memakai RTOS task terpisah maupun UI lokal.
+
+## Hardware Summary
 
 | Item | HR Band | Tympanic Temp |
 |---|---|---|
-| Board | ESP32-S3 (`esp32-s3-devkitc-1`) | ESP32-C3 (`esp32-c3-devkitm-1`) |
-| Framework | Arduino via PlatformIO | Arduino via PlatformIO |
-| Sensor | MAX30102 (stub placeholder in current code) | MLX90614 (stub placeholder in current code) |
-| Role | BLE Peripheral / GATT Server | BLE Peripheral / GATT Server |
-| Properties | Read + Notify | Read + Notify |
-| Security | Bonding + encryption required | Bonding + encryption required |
-| Update interval | 1 Hz | 1 Hz (or trigger event; currently periodic 1 Hz) |
-| Payload size | 6 bytes | 4 bytes |
+| MCU | ESP32-S3 | ESP32-C3 |
+| Board target PlatformIO | `esp32-s3-devkitc-1` | `esp32-c3-devkitm-1` |
+| Sensor utama | MAX3010x/MAX30102 compatible | MLX90614 |
+| Transport sensor | I2C | I2C |
+| Display | AMOLED SH8601 + touch FT3168 | Tidak ada |
+| BLE role | Peripheral / GATT Server | Peripheral / GATT Server |
 
----
+## HR Band Firmware Detail
 
-## 3) Component List (BOM)
+### Sensor Pipeline
 
-### HR Band Node
+Implementasi `ergoquipt_hr_band/src/sensor_manager.cpp` melakukan:
 
-| Component | Qty | Notes |
-|---|---:|---|
-| ESP32-S3 Dev Board (`esp32-s3-devkitc-1`) | 1 | BLE MCU |
-| MAX30102 module | 1 | Heart rate + SpO2 sensor (I2C) |
-| LiPo battery + charger/protection (optional) | 1 | Portable mode |
-| Pull-up resistors for I2C (if sensor board has none) | 2 | Typical 4.7k to 3.3V |
-| Jumper wires / PCB traces | - | Wiring |
+- scan I2C saat startup,
+- inisialisasi MAX3010x pada alamat `0x57`,
+- pembacaan FIFO sample `IR` dan `Red`,
+- smoothing dengan moving average,
+- deteksi keberadaan jari berdasarkan ambang `IR`,
+- deteksi puncak untuk menghitung `RRI`, `HR`, dan `HRV (RMSSD)`,
+- estimasi SpO2 berbasis rasio AC/DC dari kanal merah dan IR,
+- pembentukan `status` bitmask untuk UI dan BLE.
 
-### Tympanic Node
+Status internal `VitalData` berisi:
 
-| Component | Qty | Notes |
-|---|---:|---|
-| ESP32-C3 Dev Board (`esp32-c3-devkitm-1`) | 1 | BLE MCU |
-| MLX90614 module | 1 | IR temperature sensor (I2C) |
-| LiPo battery + charger/protection (optional) | 1 | Portable mode |
-| Pull-up resistors for I2C (if sensor board has none) | 2 | Typical 4.7k to 3.3V |
-| Jumper wires / PCB traces | - | Wiring |
+- `hr`
+- `spo2_x100`
+- `rri`
+- `hrv`
+- `status`
 
-Notes:
-- Keep I2C and sensor logic at 3.3V logic level for ESP32 GPIO safety.
-- Many breakout boards already include pull-ups; do not duplicate aggressively.
+### UI Lokal AMOLED
 
----
+Implementasi `ergoquipt_hr_band/src/ui_manager.cpp` menampilkan:
 
-## 4) Pinout and Wiring
+- Heart Rate
+- SpO2
+- R-R Interval
+- HRV
+- status BLE
+- status baterai mock
+- status sensor di bagian bawah layar
 
-Current firmware uses sensor stubs and does not lock specific I2C pins yet.  
-Recommended standard pin mapping for both projects:
+UI dibangun dengan:
 
-- `SDA = GPIO8`
-- `SCL = GPIO9`
+- `Arduino_GFX_Library`
+- `lvgl`
+- QSPI AMOLED SH8601
+- touch controller FT3168
 
-If you choose different pins, set them in sensor init (for example with `Wire.begin(SDA, SCL)` in `sensor_manager`).
+### HR Band Pin Mapping
 
-### 4.1 HR Band Wiring (ESP32-S3 + MAX30102)
+Pin yang saat ini dipakai firmware:
 
-| MAX30102 Pin | ESP32-S3 Pin | Description |
-|---|---|---|
-| VIN | 3V3 | Sensor supply |
-| GND | GND | Ground |
-| SDA | GPIO8 | I2C data |
-| SCL | GPIO9 | I2C clock |
-| INT (optional) | Any input GPIO | Optional interrupt/data-ready |
+| Fungsi | Pin |
+|---|---:|
+| I2C SDA MAX3010x / FT3168 | GPIO15 |
+| I2C SCL MAX3010x / FT3168 | GPIO14 |
+| Display CS | GPIO12 |
+| Display SCK | GPIO11 |
+| Display D0 | GPIO4 |
+| Display D1 | GPIO5 |
+| Display D2 | GPIO6 |
+| Display D3 | GPIO7 |
+| Touch INT | GPIO21 |
 
-### 4.2 Tympanic Wiring (ESP32-C3 + MLX90614)
+Catatan:
 
-| MLX90614 Pin | ESP32-C3 Pin | Description |
-|---|---|---|
-| VIN | 3V3 | Sensor supply |
-| GND | GND | Ground |
-| SDA | GPIO8 | I2C data |
-| SCL | GPIO9 | I2C clock |
+- Firmware menganggap varian hardware AMOLED touch ESP32-S3 yang menggunakan SH8601 + FT3168.
+- `board_upload.flash_size` diset ke `16MB`.
+- `PSRAM` diaktifkan untuk draw buffer LVGL.
 
-### 4.3 Wiring Diagram (Mermaid)
+### HR Band BLE Contract
 
-```mermaid
-flowchart LR
-  subgraph HR["Ergoquipt HR Band (ESP32-S3)"]
-    HRMCU["ESP32-S3 DevKitC-1"]
-    MAX["MAX30102"]
-    HRMCU -- "3V3" --> MAX
-    HRMCU -- "GND" --> MAX
-    HRMCU -- "GPIO8 (SDA)" --> MAX
-    HRMCU -- "GPIO9 (SCL)" --> MAX
-    MAX -- "INT (optional)" --> HRMCU
-  end
+Device name:
 
-  subgraph TMP["Ergoquipt Tympanic (ESP32-C3)"]
-    C3["ESP32-C3 DevKitM-1"]
-    MLX["MLX90614"]
-    C3 -- "3V3" --> MLX
-    C3 -- "GND" --> MLX
-    C3 -- "GPIO8 (SDA)" --> MLX
-    C3 -- "GPIO9 (SCL)" --> MLX
-  end
-```
+- format `Ergoquipt-HR-XXX`
+- `XXX` berasal dari 3 digit hex terakhir MAC STA.
 
----
-
-## 5) BLE Specification
-
-## 5.1 Device Naming
-
-- HR Band: `Ergoquipt-HR-XXX`
-- Tympanic: `Ergoquipt-TEMP-XXX`
-
-`XXX` is derived from the last 3 hex digits of the STA MAC (`%01X%02X` in current code).
-
-## 5.2 Service and Characteristic UUIDs
-
-### HR Band
+UUID:
 
 - Service UUID: `e0020001-7cce-4c2a-9f0b-112233445566`
 - Characteristic UUID: `e0020002-7cce-4c2a-9f0b-112233445566`
 
-### Tympanic Temp
+Properties:
+
+- `READ`
+- `NOTIFY`
+
+Security:
+
+- secure bonding (`ESP_LE_AUTH_REQ_SC_BOND`)
+- encryption key init/resp diaktifkan
+
+Payload HR band berukuran `12` byte, little-endian:
+
+| Byte | Field | Tipe | Keterangan |
+|---:|---|---|---|
+| 0..1 | `hr` | `uint16` | bpm |
+| 2..3 | `spo2_x100` | `uint16` | SpO2 x100 |
+| 4..5 | `rri` | `uint16` | ms |
+| 6..7 | `hrv` | `uint16` | ms |
+| 8 | `status` | `uint8` | bitmask status |
+| 9 | `sequence` | `uint8` | counter publish |
+| 10 | reserved | `uint8` | `0x00` |
+| 11 | reserved | `uint8` | `0x00` |
+
+HR band status bitmask:
+
+| Bit | Mask | Arti |
+|---:|---:|---|
+| 0 | `0x01` | vitals valid |
+| 1 | `0x02` | sensor error |
+| 2 | `0x04` | RRI valid |
+| 3 | `0x08` | HRV valid |
+| 4 | `0x10` | low battery |
+
+## Tympanic Firmware Detail
+
+Firmware `ergoquipt_tympanic_temp`:
+
+- membaca register object temperature MLX90614 pada alamat `0x5A`,
+- memakai pin I2C `SDA=GPIO8` dan `SCL=GPIO9`,
+- mengirim payload BLE setiap 1000 ms,
+- menyalakan LED koneksi pada `GPIO7` saat connected dan berkedip saat idle.
+
+Device name:
+
+- format `Ergoquipt-TEMP-XXX`
+
+UUID:
 
 - Service UUID: `e0010001-7cce-4c2a-9f0b-112233445566`
 - Characteristic UUID: `e0010002-7cce-4c2a-9f0b-112233445566`
 
-## 5.3 GATT Behavior Contract
+Payload tympanic berukuran `4` byte, little-endian:
 
-- Peripheral role only
-- Characteristic properties: `READ | NOTIFY`
-- CCCD descriptor present (`BLE2902`)
-- Notify is sent only when connected
-- On disconnect, advertising restarts automatically
-- Security mode in firmware:
-  - Encryption required
-  - Secure bonding enabled (`ESP_LE_AUTH_REQ_SC_BOND`)
-
----
-
-## 6) BLE API Contract for Mobile App Team
-
-This section is the integration contract for Android/iOS app developers.
-
-## 6.1 Discovery and Subscription Flow
-
-1. Scan for names prefix:
-   - `Ergoquipt-HR-`
-   - `Ergoquipt-TEMP-`
-2. Connect
-3. Perform service discovery
-4. Find product-specific service UUID and characteristic UUID
-5. Enable notifications (write CCCD = `0x0001`)
-6. Optionally perform initial `READ` for snapshot
-7. Consume notification stream at ~1 Hz
-
-## 6.2 Payload Definitions
-
-All multi-byte fields are **little-endian**.
-
-### A) HR Band Payload (6 bytes)
-
-| Byte Index | Type | Field | Unit |
+| Byte | Field | Tipe | Keterangan |
 |---:|---|---|---|
-| 0..1 | `uint16` | `heartRate` | bpm |
-| 2..3 | `uint16` | `spo2X100` | SpO2 percent x100 |
-| 4 | `uint8` | `status` | bitmask |
-| 5 | `uint8` | `sequence` | wraps 0..255 |
+| 0..1 | `temperatureX100` | `int16` | suhu Celsius x100 |
+| 2 | `status` | `uint8` | bitmask status |
+| 3 | `sequence` | `uint8` | counter publish |
 
-Decode:
-- `heartRate = b0 | (b1 << 8)`
-- `spo2 = (b2 | (b3 << 8)) / 100.0`
+Tympanic status bitmask:
 
-### B) Tympanic Payload (4 bytes)
-
-| Byte Index | Type | Field | Unit |
-|---:|---|---|---|
-| 0..1 | `int16` | `temperatureX100` | degC x100 |
-| 2 | `uint8` | `status` | bitmask |
-| 3 | `uint8` | `sequence` | wraps 0..255 |
-
-Decode:
-- `tempRaw = int16(b0 | (b1 << 8))`
-- `tempC = tempRaw / 100.0`
-
-## 6.3 Status Bitmask Contract
-
-| Bit | Mask | Meaning |
+| Bit | Mask | Arti |
 |---:|---:|---|
-| 0 | `0x01` | Sensor valid |
-| 1 | `0x02` | Sensor error |
-| 2 | `0x04` | Low battery |
-| 3..7 | - | Reserved |
+| 0 | `0x01` | sensor valid |
+| 1 | `0x02` | sensor error |
+| 2 | `0x04` | low battery |
 
-Recommended app handling:
-- If `sensor error` bit is set, mark sample as invalid and show warning state.
-- If `low battery` bit is set, show battery warning.
-- Treat unknown reserved bits as forward-compatible metadata.
+## BLE Integration Flow
 
-## 6.4 Sequence Counter Contract
+Untuk aplikasi mobile:
 
-- 8-bit unsigned counter, increments every published payload.
-- Wrap-around is expected: `255 -> 0`.
-- App should detect packet drops by computing modulo-256 deltas.
+1. Scan perangkat dengan prefix `Ergoquipt-HR-` atau `Ergoquipt-TEMP-`.
+2. Connect ke peripheral.
+3. Discover service dan characteristic sesuai UUID.
+4. Enable notification via CCCD.
+5. Lakukan `READ` awal bila perlu.
+6. Konsumsi stream data 1 Hz.
 
-Example:
-- Last sequence: `250`
-- Next sequence: `253`
-- Estimated missing packets: `2` (`251`, `252`)
-
----
-
-## 7) Data Flow Diagrams (Mermaid)
-
-### 7.1 Runtime Data Flow
-
-```mermaid
-flowchart TD
-  A["Device Boot"] --> B["SensorManager.begin()"]
-  B --> C["BleManager.begin()"]
-  C --> D["Advertising Start"]
-  D --> E{"Central Connected?"}
-  E -- "No" --> D
-  E -- "Yes" --> F["1 Hz Scheduler (non-blocking)"]
-  F --> G["Acquire sensor sample"]
-  G --> H["Encode payload (little-endian)"]
-  H --> I{"deviceConnected == true ?"}
-  I -- "No" --> F
-  I -- "Yes" --> J["setValue + notify"]
-  J --> F
-```
-
-### 7.2 BLE Interaction Sequence
-
-```mermaid
-sequenceDiagram
-  participant App as Mobile App (Central)
-  participant Dev as Ergoquipt Device (Peripheral)
-
-  App->>Dev: Scan and connect
-  Dev-->>App: Advertise name + service UUID
-  App->>Dev: Discover services/characteristics
-  App->>Dev: Enable notifications (CCCD 0x0001)
-  loop ~1 Hz
-    Dev-->>App: Notify packed payload
-  end
-  App->>Dev: Optional read characteristic
-  Dev-->>App: Current payload snapshot
-```
-
----
-
-## 8) Build and Flash
-
-Because some setups do not have `pio` in PATH, use:
+## Build
 
 ### HR Band
 
 ```powershell
-cd ergoquipt_hr_band
-& "C:\Users\ASUS TUF\.platformio\penv\Scripts\python.exe" -m platformio run
+cd D:\Aerasea\Ergoquipt-HR_Tympanic\ergoquipt_hr_band
+& "C:\Users\ASUS TUF\.platformio\penv\Scripts\pio.exe" run
 ```
 
 ### Tympanic Temp
 
 ```powershell
-cd ergoquipt_tympanic_temp
-& "C:\Users\ASUS TUF\.platformio\penv\Scripts\python.exe" -m platformio run
+cd D:\Aerasea\Ergoquipt-HR_Tympanic\ergoquipt_tympanic_temp
+& "C:\Users\ASUS TUF\.platformio\penv\Scripts\pio.exe" run
 ```
 
-Upload target:
+## Upload
+
+### HR Band
 
 ```powershell
-& "C:\Users\ASUS TUF\.platformio\penv\Scripts\python.exe" -m platformio run -t upload
+cd D:\Aerasea\Ergoquipt-HR_Tympanic\ergoquipt_hr_band
+& "C:\Users\ASUS TUF\.platformio\penv\Scripts\pio.exe" run -t upload
 ```
 
----
+### Tympanic Temp
 
-## 9) Implementation Notes and Next Steps
+```powershell
+cd D:\Aerasea\Ergoquipt-HR_Tympanic\ergoquipt_tympanic_temp
+& "C:\Users\ASUS TUF\.platformio\penv\Scripts\pio.exe" run -t upload
+```
 
-- Current sensor layers are placeholders/stubs for MAX30102 and MLX90614.
-- BLE contract is stable and ready for mobile integration.
-- Recommended next firmware step:
-  1. Integrate real sensor drivers in each `sensor_manager.cpp`.
-  2. Add battery ADC reading and set low-battery status bit.
-  3. Add optional timestamp sync and OTA service in future revision.
+## Monitor Serial
+
+### HR Band
+
+```powershell
+cd D:\Aerasea\Ergoquipt-HR_Tympanic\ergoquipt_hr_band
+& "C:\Users\ASUS TUF\.platformio\penv\Scripts\pio.exe" device monitor -b 115200
+```
+
+### Tympanic Temp
+
+```powershell
+cd D:\Aerasea\Ergoquipt-HR_Tympanic\ergoquipt_tympanic_temp
+& "C:\Users\ASUS TUF\.platformio\penv\Scripts\pio.exe" device monitor -b 115200
+```
+
+## Current Notes
+
+- HR band sudah memakai pembacaan sensor nyata, perhitungan HR/SpO2/RRI/HRV, UI AMOLED, dan payload BLE 12 byte.
+- Tympanic temp sudah memakai pembacaan MLX90614 nyata dan publish BLE 4 byte.
+- Estimasi baterai pada HR band masih berupa mock value.
+- Dua byte terakhir payload HR band masih disisakan untuk ekspansi protokol berikutnya.
