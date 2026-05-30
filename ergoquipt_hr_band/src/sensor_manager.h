@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <MAX30105.h>
+#include <SensorQMI8658.hpp>
 
 #include "config.h"
 
@@ -29,14 +30,17 @@ class SensorManager {
   };
 
   bool initSensor();
+  bool initImu();
   void scanI2cBus();
   bool readSample(uint32_t &ir, uint32_t &red);
+  void sampleMotion(uint32_t nowMs);
   void processSignals(uint32_t nowMs, uint32_t ir, uint32_t red);
   bool detectPeak(uint32_t nowMs, uint32_t filteredIr, int32_t derivative);
   void updateSpo2();
-  void updateBatteryEstimate(uint32_t nowMs);
+  bool motionStable() const;
 
   MAX30105 sensor_;
+  SensorQMI8658 imu_;
   portMUX_TYPE dataMux_ = portMUX_INITIALIZER_UNLOCKED;
   VitalData latest_;
 
@@ -55,11 +59,14 @@ class SensorManager {
   uint32_t lastPeakMs_ = 0;
   uint32_t sampleCounter_ = 0;
   uint32_t lastDebugLogMs_ = 0;
+  uint32_t lastImuSampleMs_ = 0;
   uint32_t lastIrSample_ = 0;
   uint32_t lastRedSample_ = 0;
-  uint8_t batteryPercent_ = cfg::kMockBatteryStartPct;
   uint8_t partId_ = 0;
+  float accelMagnitudeG_ = 1.0f;
+  float motionScore_ = 0.0f;
 
   bool sensorReady_ = false;
+  bool imuReady_ = false;
   bool fingerPresent_ = false;
 };

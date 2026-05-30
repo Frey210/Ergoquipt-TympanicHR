@@ -3,6 +3,7 @@
 
 #include "ble_manager.h"
 #include "config.h"
+#include "power_manager.h"
 #include "sensor_manager.h"
 #include "ui_manager.h"
 
@@ -13,6 +14,7 @@ namespace {
 BleManager g_bleManager;
 SensorManager g_sensorManager;
 UiManager g_uiManager;
+PowerManager g_powerManager;
 
 void sensorTask(void *parameter) {
   auto *sensorManager = static_cast<SensorManager *>(parameter);
@@ -24,12 +26,19 @@ void sensorTask(void *parameter) {
   }
 }
 
+VitalData dataWithBatteryStatus(VitalData data) {
+  if (g_powerManager.batteryPercent() <= cfg::kLowBatteryThresholdPct) {
+    data.status |= cfg::kStatusLowBattery;
+  }
+  return data;
+}
+
 void bleTask(void *parameter) {
   auto *bleManager = static_cast<BleManager *>(parameter);
   TickType_t lastWake = xTaskGetTickCount();
 
   for (;;) {
-    bleManager->publishLatest(g_sensorManager.latest());
+    bleManager->publishLatest(dataWithBatteryStatus(g_sensorManager.latest()));
     vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(cfg::kBlePublishPeriodMs));
   }
 }
@@ -39,8 +48,16 @@ void uiTask(void *parameter) {
   TickType_t lastWake = xTaskGetTickCount();
 
   for (;;) {
-    uiManager->tick(g_sensorManager.latest(), g_bleManager.isConnected(),
-                    g_sensorManager.batteryPercent());
+    g_powerManager.poll();
+    if (g_powerManager.takeShortPress() || g_powerManager.takeBootPress()) {
+      uiManager->toggleDisplay();
+    }
+    if (g_powerManager.takeLongPress()) {
+      Serial.println("Power: long press detected, shutting down via AXP2101");
+      g_powerManager.shutdown();
+    }
+    uiManager->tick(dataWithBatteryStatus(g_sensorManager.latest()), g_bleManager.isConnected(),
+                    g_powerManager.batteryPercent());
     vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(cfg::kUiTaskPeriodMs));
   }
 }
@@ -68,6 +85,7 @@ void setup() {
   }
 
   g_sensorManager.begin();
+  g_powerManager.begin();
   g_bleManager.begin();
   g_uiManager.begin();
 

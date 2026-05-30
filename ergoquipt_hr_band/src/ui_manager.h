@@ -9,6 +9,9 @@ class UiManager {
  public:
   void begin();
   void tick(const VitalData &data, bool bleConnected, uint8_t batteryPercent);
+  void setDisplayOn(bool on);
+  void toggleDisplay();
+  bool displayOn() const;
 
  private:
   void createScreen();
@@ -25,6 +28,7 @@ class UiManager {
 
   Snapshot lastSnapshot_{};
   bool initialized_ = false;
+  bool displayOn_ = true;
   uint32_t lastRefreshMs_ = 0;
   uint32_t lastLvTickMs_ = 0;
 

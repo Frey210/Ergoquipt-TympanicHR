@@ -25,6 +25,9 @@ constexpr uint16_t kDisplayHeight = 448;
 
 constexpr uint8_t kMax3010xAddress = 0x57;
 constexpr uint8_t kFt3168Address = 0x38;
+constexpr uint8_t kTca9554Address = 0x20;
+constexpr uint8_t kQmi8658Address = 0x6B;
+constexpr uint8_t kAxp2101Address = 0x34;
 
 constexpr int kI2cSdaPin = 15;
 constexpr int kI2cSclPin = 14;
@@ -39,6 +42,11 @@ constexpr int kDisplayD1Pin = 5;
 constexpr int kDisplayD2Pin = 6;
 constexpr int kDisplayD3Pin = 7;
 constexpr int kTouchIntPin = 21;
+constexpr int kBootButtonPin = 0;
+constexpr uint8_t kExpanderPmuIrqPin = 5;
+constexpr uint8_t kExpanderPowerButtonPin = 4;
+constexpr uint8_t kExpanderPowerHoldPin1 = 1;
+constexpr uint8_t kExpanderPowerHoldPin2 = 2;
 
 constexpr uint8_t kPayloadSize = 12;
 
@@ -58,9 +66,12 @@ constexpr size_t kSignalWindowSize = 8;
 constexpr size_t kSpo2WindowSize = 100;
 
 constexpr uint32_t kFingerIrThreshold = 18000;
+constexpr float kStillMotionThreshold = 0.08f;
+constexpr float kHighMotionThreshold = 0.22f;
 constexpr uint16_t kMinRriMs = 300;
 constexpr uint16_t kMaxRriMs = 2000;
 constexpr uint16_t kLowBatteryThresholdPct = 20;
 constexpr uint8_t kMockBatteryStartPct = 92;
+constexpr uint32_t kBatteryPollPeriodMs = 5000;
 
 }  // namespace cfg

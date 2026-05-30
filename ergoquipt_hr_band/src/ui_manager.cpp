@@ -259,6 +259,10 @@ void UiManager::tick(const VitalData &data, bool bleConnected, uint8_t batteryPe
 
   lv_timer_handler();
 
+  if (!displayOn_) {
+    return;
+  }
+
   if ((nowMs - lastRefreshMs_) < cfg::kUiRefreshPeriodMs) {
     return;
   }
@@ -346,3 +350,14 @@ void UiManager::setMetricValue(lv_obj_t *label, const char *suffix, uint16_t val
   }
   lv_label_set_text(label, text);
 }
+
+void UiManager::setDisplayOn(bool on) {
+  displayOn_ = on;
+  if (g_gfx != nullptr) {
+    static_cast<Arduino_SH8601 *>(g_gfx)->setBrightness(on ? 220 : 0);
+  }
+}
+
+void UiManager::toggleDisplay() { setDisplayOn(!displayOn_); }
+
+bool UiManager::displayOn() const { return displayOn_; }

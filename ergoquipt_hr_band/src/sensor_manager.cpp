@@ -75,6 +75,7 @@ void SensorManager::begin() {
 
   scanI2cBus();
   sensorReady_ = initSensor();
+  imuReady_ = initImu();
   latest_.status = sensorReady_ ? 0 : cfg::kStatusSensorError;
 
   if (sensorReady_) {
@@ -82,6 +83,8 @@ void SensorManager::begin() {
   } else {
     Serial.println("MAX3010x init failed on I2C address 0x57");
   }
+  Serial.printf("QMI8658 IMU %s on I2C address 0x%02X\n",
+                imuReady_ ? "initialized" : "not detected", cfg::kQmi8658Address);
 }
 
 bool SensorManager::initSensor() {
@@ -96,6 +99,28 @@ bool SensorManager::initSensor() {
     sensor_.setPulseAmplitudeRed(0x2F);
     sensor_.setPulseAmplitudeIR(0x2F);
     sensor_.setPulseAmplitudeGreen(0);
+  }
+  if (g_i2cMutex != nullptr) {
+    xSemaphoreGive(g_i2cMutex);
+  }
+  return ok;
+}
+
+bool SensorManager::initImu() {
+  bool ok = false;
+  if (g_i2cMutex != nullptr) {
+    xSemaphoreTake(g_i2cMutex, portMAX_DELAY);
+  }
+  ok = imu_.begin(Wire, cfg::kQmi8658Address, cfg::kI2cSdaPin, cfg::kI2cSclPin);
+  if (ok) {
+    imu_.configAccelerometer(SensorQMI8658::ACC_RANGE_4G,
+                             SensorQMI8658::ACC_ODR_125Hz,
+                             SensorQMI8658::LPF_MODE_0);
+    imu_.configGyroscope(SensorQMI8658::GYR_RANGE_256DPS,
+                         SensorQMI8658::GYR_ODR_112_1Hz,
+                         SensorQMI8658::LPF_MODE_0);
+    imu_.enableAccelerometer();
+    imu_.enableGyroscope();
   }
   if (g_i2cMutex != nullptr) {
     xSemaphoreGive(g_i2cMutex);
@@ -170,21 +195,51 @@ void SensorManager::sample() {
 
   lastIrSample_ = ir;
   lastRedSample_ = red;
+  sampleMotion(nowMs);
   processSignals(nowMs, ir, red);
-  updateBatteryEstimate(nowMs);
 
   if ((nowMs - lastDebugLogMs_) >= 1000U) {
     lastDebugLogMs_ = nowMs;
     const VitalData snapshot = latest();
     Serial.printf(
         "Vitals hr=%u spo2=%u.%02u rri=%u hrv=%u status=0x%02X ir=%lu red=%lu "
-        "finger=%s sensor=%s part=0x%02X\n",
+        "finger=%s sensor=%s part=0x%02X motion=%.3f imu=%s\n",
         snapshot.hr, snapshot.spo2_x100 / 100U, snapshot.spo2_x100 % 100U,
         snapshot.rri, snapshot.hrv, snapshot.status,
         static_cast<unsigned long>(lastIrSample_),
         static_cast<unsigned long>(lastRedSample_),
-        fingerPresent_ ? "yes" : "no", sensorReady_ ? "ok" : "fail", partId_);
+        fingerPresent_ ? "yes" : "no", sensorReady_ ? "ok" : "fail", partId_,
+        static_cast<double>(motionScore_), imuReady_ ? "ok" : "missing");
   }
+}
+
+void SensorManager::sampleMotion(uint32_t nowMs) {
+  if (!imuReady_ || (nowMs - lastImuSampleMs_) < 20U) {
+    return;
+  }
+  lastImuSampleMs_ = nowMs;
+
+  float ax = 0.0f;
+  float ay = 0.0f;
+  float az = 0.0f;
+  bool ok = false;
+  if (g_i2cMutex != nullptr) {
+    xSemaphoreTake(g_i2cMutex, portMAX_DELAY);
+  }
+  if (imu_.getDataReady()) {
+    ok = imu_.getAccelerometer(ax, ay, az);
+  }
+  if (g_i2cMutex != nullptr) {
+    xSemaphoreGive(g_i2cMutex);
+  }
+  if (!ok) {
+    return;
+  }
+
+  const float magnitude = sqrtf(ax * ax + ay * ay + az * az);
+  const float delta = fabsf(magnitude - accelMagnitudeG_);
+  accelMagnitudeG_ = accelMagnitudeG_ * 0.90f + magnitude * 0.10f;
+  motionScore_ = motionScore_ * 0.85f + delta * 0.15f;
 }
 
 void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
@@ -197,8 +252,10 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
   spo2Index_ = (spo2Index_ + 1U) % cfg::kSpo2WindowSize;
   spo2Count_ = std::min(spo2Count_ + 1U, static_cast<size_t>(cfg::kSpo2WindowSize));
 
-  const uint32_t filteredIr = averageWindow(irWindow_, cfg::kSignalWindowSize);
+  const uint32_t windowIr = averageWindow(irWindow_, cfg::kSignalWindowSize);
   const uint32_t filteredRed = averageWindow(redWindow_, cfg::kSignalWindowSize);
+  const uint32_t filteredIr =
+      motionStable() ? windowIr : static_cast<uint32_t>((lastFilteredIr_ * 3U + windowIr) / 4U);
 
   if (baselineIr_ == 0) {
     baselineIr_ = filteredIr;
@@ -209,7 +266,8 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
   fingerPresent_ = filteredIr > cfg::kFingerIrThreshold;
   const int32_t derivative =
       static_cast<int32_t>(filteredIr) - static_cast<int32_t>(lastFilteredIr_);
-  const bool peakDetected = detectPeak(nowMs, filteredIr, derivative);
+  const bool peakDetected = motionScore_ < cfg::kHighMotionThreshold &&
+                            detectPeak(nowMs, filteredIr, derivative);
   lastFilteredIr_ = filteredIr;
   previousDerivative_ = derivative;
   ++sampleCounter_;
@@ -230,7 +288,9 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
     portEXIT_CRITICAL(&dataMux_);
     return;
   } else {
-    updateSpo2();
+    if (motionStable()) {
+      updateSpo2();
+    }
     updated = latest();
     if (updated.hr > 0 && updated.spo2_x100 > 0) {
       updated.status |= cfg::kStatusVitalsValid;
@@ -241,10 +301,6 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
     if (updated.hrv > 0) {
       updated.status |= cfg::kStatusHrvValid;
     }
-  }
-
-  if (batteryPercent_ <= cfg::kLowBatteryThresholdPct) {
-    updated.status |= cfg::kStatusLowBattery;
   }
 
   portENTER_CRITICAL(&dataMux_);
@@ -264,7 +320,7 @@ bool SensorManager::detectPeak(uint32_t nowMs, uint32_t filteredIr,
 
   const uint32_t amplitude = (filteredIr > baselineIr_) ? (filteredIr - baselineIr_) : 0;
   const uint32_t adaptiveThreshold =
-      std::max<uint32_t>(baselineIr_ / 45U, 120U);
+      std::max<uint32_t>(baselineIr_ / (motionStable() ? 45U : 32U), 120U);
 
   if (!(previousDerivative_ > 0 && derivative <= 0 &&
         amplitude > adaptiveThreshold)) {
@@ -331,10 +387,8 @@ void SensorManager::updateSpo2() {
   portEXIT_CRITICAL(&dataMux_);
 }
 
-void SensorManager::updateBatteryEstimate(uint32_t nowMs) {
-  const uint8_t drop = static_cast<uint8_t>((nowMs / 60000U) % 35U);
-  batteryPercent_ =
-      static_cast<uint8_t>(std::max<int>(cfg::kMockBatteryStartPct - drop, 12));
+bool SensorManager::motionStable() const {
+  return !imuReady_ || motionScore_ <= cfg::kStillMotionThreshold;
 }
 
 VitalData SensorManager::latest() const {
@@ -345,7 +399,7 @@ VitalData SensorManager::latest() const {
   return snapshot;
 }
 
-uint8_t SensorManager::batteryPercent() const { return batteryPercent_; }
+uint8_t SensorManager::batteryPercent() const { return cfg::kMockBatteryStartPct; }
 
 bool SensorManager::sensorReady() const { return sensorReady_; }
 
