@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "logo_asset.h"
+
 namespace {
 
 Arduino_DataBus *g_bus = nullptr;
@@ -93,25 +95,63 @@ void touchRead(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   (void)drv;
 }
 
-lv_obj_t *createMetricCard(lv_obj_t *parent, const char *title, lv_coord_t col,
-                           lv_coord_t row) {
+lv_obj_t *createCard(lv_obj_t *parent, lv_coord_t width, lv_coord_t height) {
   lv_obj_t *card = lv_obj_create(parent);
-  lv_obj_set_size(card, 156, 120);
-  lv_obj_set_grid_cell(card, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH,
-                       row, 1);
+  lv_obj_set_size(card, width, height);
   lv_obj_set_style_radius(card, 24, 0);
-  lv_obj_set_style_border_width(card, 0, 0);
-  lv_obj_set_style_bg_color(card, lv_color_hex(0x12151D), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x1D2733), 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(0x0E121A), 0);
   lv_obj_set_style_bg_opa(card, LV_OPA_100, 0);
-  lv_obj_set_style_shadow_width(card, 0, 0);
-  lv_obj_set_style_pad_all(card, 18, 0);
-
-  lv_obj_t *label = lv_label_create(card);
-  lv_label_set_text(label, title);
-  lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(0x8E99A8), 0);
-  lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_shadow_width(card, 12, 0);
+  lv_obj_set_style_shadow_color(card, lv_color_hex(0x020409), 0);
+  lv_obj_set_style_pad_all(card, 14, 0);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   return card;
+}
+
+lv_obj_t *createCardTitle(lv_obj_t *card, const char *title, const char *icon,
+                          lv_color_t color) {
+  lv_obj_t *label = lv_label_create(card);
+  char text[48];
+  snprintf(text, sizeof(text), "%s %s", icon, title);
+  lv_label_set_text(label, text);
+  lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_style_text_color(label, color, 0);
+  lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+  return label;
+}
+
+lv_obj_t *createNavButton(lv_obj_t *parent, const char *text) {
+  lv_obj_t *button = lv_btn_create(parent);
+  lv_obj_set_size(button, 104, 34);
+  lv_obj_set_style_radius(button, 17, 0);
+  lv_obj_set_style_bg_color(button, lv_color_hex(0x111722), 0);
+  lv_obj_set_style_border_width(button, 1, 0);
+  lv_obj_set_style_border_color(button, lv_color_hex(0x243244), 0);
+  lv_obj_t *label = lv_label_create(button);
+  lv_label_set_text(label, text);
+  lv_obj_center(label);
+  lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xAAB4C3), 0);
+  return button;
+}
+
+lv_obj_t *createTrendChart(lv_obj_t *card, lv_color_t color,
+                           lv_chart_series_t **series, int16_t minValue,
+                           int16_t maxValue) {
+  lv_obj_t *chart = lv_chart_create(card);
+  lv_obj_set_size(chart, 132, 48);
+  lv_obj_align(chart, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(chart, cfg::kTrendBufferSize);
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, minValue, maxValue);
+  lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(chart, 0, 0);
+  lv_obj_set_style_line_width(chart, 3, LV_PART_ITEMS);
+  lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);
+  *series = lv_chart_add_series(chart, color, LV_CHART_AXIS_PRIMARY_Y);
+  return chart;
 }
 
 }  // namespace
@@ -164,88 +204,196 @@ void UiManager::begin() {
 void UiManager::createScreen() {
   screen_ = lv_obj_create(nullptr);
   lv_obj_set_style_bg_color(screen_, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_grad_color(screen_, lv_color_hex(0x090B10), 0);
+  lv_obj_set_style_bg_grad_color(screen_, lv_color_hex(0x07101B), 0);
   lv_obj_set_style_bg_grad_dir(screen_, LV_GRAD_DIR_VER, 0);
   lv_obj_set_style_border_width(screen_, 0, 0);
-  lv_obj_set_style_pad_all(screen_, 20, 0);
+  lv_obj_set_style_pad_all(screen_, 16, 0);
+  lv_obj_clear_flag(screen_, LV_OBJ_FLAG_SCROLLABLE);
 
-  titleLabel_ = lv_label_create(screen_);
-  lv_label_set_text(titleLabel_, "Monitoring");
-  lv_obj_align(titleLabel_, LV_ALIGN_TOP_LEFT, 0, 4);
-  lv_obj_set_style_text_color(titleLabel_, lv_color_hex(0xF3F5F7), 0);
-  lv_obj_set_style_text_font(titleLabel_, &lv_font_montserrat_24, 0);
+  createHeader();
+  createNavigation();
+  createDashboard();
+  createTrends();
+  createDevicePage();
+  setPage(0);
+  lv_scr_load(screen_);
+}
 
-  heartLabel_ = lv_label_create(screen_);
-  lv_label_set_text(heartLabel_, "HR");
-  lv_obj_align(heartLabel_, LV_ALIGN_TOP_LEFT, 282, 8);
-  lv_obj_set_style_text_color(heartLabel_, lv_color_hex(0xFF5A6B), 0);
-  lv_obj_set_style_text_font(heartLabel_, &lv_font_montserrat_22, 0);
+void UiManager::createHeader() {
+  logoImg_ = lv_img_create(screen_);
+  lv_img_set_src(logoImg_, &ergo_logo_img);
+  lv_obj_align(logoImg_, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  timeLabel_ = lv_label_create(screen_);
+  lv_label_set_text(timeLabel_, "--:--:--");
+  lv_obj_align(timeLabel_, LV_ALIGN_TOP_RIGHT, 0, 0);
+  lv_obj_set_style_text_color(timeLabel_, lv_color_hex(0xF4F8FC), 0);
+  lv_obj_set_style_text_font(timeLabel_, &lv_font_montserrat_20, 0);
+
+  dateLabel_ = lv_label_create(screen_);
+  lv_label_set_text(dateLabel_, "RTC not set");
+  lv_obj_align(dateLabel_, LV_ALIGN_TOP_RIGHT, 0, 24);
+  lv_obj_set_style_text_color(dateLabel_, lv_color_hex(0x6F7C8D), 0);
+  lv_obj_set_style_text_font(dateLabel_, &lv_font_montserrat_16, 0);
 
   bleLabel_ = lv_label_create(screen_);
   lv_label_set_text(bleLabel_, LV_SYMBOL_BLUETOOTH);
-  lv_obj_align(bleLabel_, LV_ALIGN_TOP_RIGHT, -46, 8);
+  lv_obj_align(bleLabel_, LV_ALIGN_TOP_LEFT, 238, 4);
   lv_obj_set_style_text_color(bleLabel_, lv_color_hex(0x566070), 0);
   lv_obj_set_style_text_font(bleLabel_, &lv_font_montserrat_20, 0);
 
   batteryLabel_ = lv_label_create(screen_);
   lv_label_set_text(batteryLabel_, LV_SYMBOL_BATTERY_FULL " 0%");
-  lv_obj_align(batteryLabel_, LV_ALIGN_TOP_RIGHT, 0, 8);
+  lv_obj_align(batteryLabel_, LV_ALIGN_TOP_LEFT, 266, 6);
   lv_obj_set_style_text_color(batteryLabel_, lv_color_hex(0xD9DEE5), 0);
   lv_obj_set_style_text_font(batteryLabel_, &lv_font_montserrat_16, 0);
+}
 
-  statusLabel_ = lv_label_create(screen_);
-  lv_label_set_text(statusLabel_, "Booting sensor...");
-  lv_label_set_long_mode(statusLabel_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(statusLabel_, 328);
-  lv_obj_align(statusLabel_, LV_ALIGN_BOTTOM_MID, 0, -20);
-  lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_color(statusLabel_, lv_color_hex(0x8E99A8), 0);
-  lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_16, 0);
+void UiManager::createNavigation() {
+  navDashboard_ = createNavButton(screen_, "Today");
+  navTrends_ = createNavButton(screen_, "Trends");
+  navDevice_ = createNavButton(screen_, "Device");
+  lv_obj_align(navDashboard_, LV_ALIGN_TOP_LEFT, 0, 52);
+  lv_obj_align(navTrends_, LV_ALIGN_TOP_MID, 0, 52);
+  lv_obj_align(navDevice_, LV_ALIGN_TOP_RIGHT, 0, 52);
 
-  static lv_coord_t columns[] = {156, 156, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t rows[] = {120, 120, LV_GRID_TEMPLATE_LAST};
-  lv_obj_t *grid = lv_obj_create(screen_);
-  lv_obj_set_size(grid, 328, 270);
-  lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 70);
-  lv_obj_set_layout(grid, LV_LAYOUT_GRID);
-  lv_obj_set_grid_dsc_array(grid, columns, rows);
-  lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(grid, 0, 0);
-  lv_obj_set_style_pad_all(grid, 0, 0);
-  lv_obj_set_style_pad_gap(grid, 16, 0);
+  lv_obj_add_event_cb(navDashboard_, [](lv_event_t *event) {
+    static_cast<UiManager *>(lv_event_get_user_data(event))->setPage(0);
+  }, LV_EVENT_CLICKED, this);
+  lv_obj_add_event_cb(navTrends_, [](lv_event_t *event) {
+    static_cast<UiManager *>(lv_event_get_user_data(event))->setPage(1);
+  }, LV_EVENT_CLICKED, this);
+  lv_obj_add_event_cb(navDevice_, [](lv_event_t *event) {
+    static_cast<UiManager *>(lv_event_get_user_data(event))->setPage(2);
+  }, LV_EVENT_CLICKED, this);
+}
 
-  lv_obj_t *hrCard = createMetricCard(grid, "Heart Rate", 0, 0);
-  hrValueLabel_ = lv_label_create(hrCard);
-  lv_label_set_text(hrValueLabel_, "-- bpm");
-  lv_obj_align(hrValueLabel_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+void UiManager::createDashboard() {
+  pageDashboard_ = lv_obj_create(screen_);
+  lv_obj_set_size(pageDashboard_, 336, 340);
+  lv_obj_align(pageDashboard_, LV_ALIGN_TOP_MID, 0, 92);
+  lv_obj_set_style_bg_opa(pageDashboard_, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(pageDashboard_, 0, 0);
+  lv_obj_set_style_pad_all(pageDashboard_, 0, 0);
+  lv_obj_clear_flag(pageDashboard_, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *hero = createCard(pageDashboard_, 336, 138);
+  lv_obj_align(hero, LV_ALIGN_TOP_MID, 0, 0);
+  createCardTitle(hero, "Heart Rate", "HR", lv_color_hex(0xFF5A6B));
+
+  hrValueLabel_ = lv_label_create(hero);
+  lv_label_set_text(hrValueLabel_, "--");
+  lv_obj_align(hrValueLabel_, LV_ALIGN_LEFT_MID, 0, 16);
   lv_obj_set_style_text_color(hrValueLabel_, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_text_font(hrValueLabel_, &lv_font_montserrat_34, 0);
+  lv_obj_set_style_text_font(hrValueLabel_, &lv_font_montserrat_48, 0);
 
-  lv_obj_t *spo2Card = createMetricCard(grid, "SpO2", 1, 0);
+  heartLabel_ = lv_label_create(hero);
+  lv_label_set_text(heartLabel_, "bpm");
+  lv_obj_align_to(heartLabel_, hrValueLabel_, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -8);
+  lv_obj_set_style_text_color(heartLabel_, lv_color_hex(0x7B8796), 0);
+  lv_obj_set_style_text_font(heartLabel_, &lv_font_montserrat_20, 0);
+
+  heroHrTrendChart_ = createTrendChart(hero, lv_color_hex(0xFF5A6B), &heroHrSeries_, 45, 180);
+  lv_obj_set_size(heroHrTrendChart_, 132, 58);
+  lv_obj_align(heroHrTrendChart_, LV_ALIGN_RIGHT_MID, 0, 18);
+
+  lv_obj_t *spo2Card = createCard(pageDashboard_, 104, 122);
+  lv_obj_align(spo2Card, LV_ALIGN_TOP_LEFT, 0, 154);
+  createCardTitle(spo2Card, "SpO2", LV_SYMBOL_OK, lv_color_hex(0x41C7F5));
   spo2ValueLabel_ = lv_label_create(spo2Card);
-  lv_label_set_text(spo2ValueLabel_, "--.-- %");
-  lv_obj_align(spo2ValueLabel_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_label_set_text(spo2ValueLabel_, "--%");
+  lv_obj_align(spo2ValueLabel_, LV_ALIGN_BOTTOM_LEFT, 0, -2);
   lv_obj_set_style_text_color(spo2ValueLabel_, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_text_font(spo2ValueLabel_, &lv_font_montserrat_28, 0);
 
-  lv_obj_t *rriCard = createMetricCard(grid, "R-R Interval", 0, 1);
+  lv_obj_t *rriCard = createCard(pageDashboard_, 104, 122);
+  lv_obj_align(rriCard, LV_ALIGN_TOP_MID, 0, 154);
+  createCardTitle(rriCard, "RRI", LV_SYMBOL_LOOP, lv_color_hex(0xFFC857));
   rriValueLabel_ = lv_label_create(rriCard);
-  lv_label_set_text(rriValueLabel_, "-- ms");
-  lv_obj_align(rriValueLabel_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_label_set_text(rriValueLabel_, "--");
+  lv_obj_align(rriValueLabel_, LV_ALIGN_BOTTOM_LEFT, 0, -2);
   lv_obj_set_style_text_color(rriValueLabel_, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_text_font(rriValueLabel_, &lv_font_montserrat_28, 0);
 
-  lv_obj_t *hrvCard = createMetricCard(grid, "HRV", 1, 1);
+  lv_obj_t *hrvCard = createCard(pageDashboard_, 104, 122);
+  lv_obj_align(hrvCard, LV_ALIGN_TOP_RIGHT, 0, 154);
+  createCardTitle(hrvCard, "HRV", LV_SYMBOL_CHARGE, lv_color_hex(0x5EE27A));
   hrvValueLabel_ = lv_label_create(hrvCard);
-  lv_label_set_text(hrvValueLabel_, "-- ms");
-  lv_obj_align(hrvValueLabel_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_label_set_text(hrvValueLabel_, "--");
+  lv_obj_align(hrvValueLabel_, LV_ALIGN_BOTTOM_LEFT, 0, -2);
   lv_obj_set_style_text_color(hrvValueLabel_, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_text_font(hrvValueLabel_, &lv_font_montserrat_28, 0);
 
-  lv_scr_load(screen_);
+  statusLabel_ = lv_label_create(pageDashboard_);
+  lv_label_set_text(statusLabel_, "Booting sensor...");
+  lv_label_set_long_mode(statusLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(statusLabel_, 320);
+  lv_obj_align(statusLabel_, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_color(statusLabel_, lv_color_hex(0x8E99A8), 0);
+  lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_16, 0);
 }
 
-void UiManager::tick(const VitalData &data, bool bleConnected, uint8_t batteryPercent) {
+void UiManager::createTrends() {
+  pageTrends_ = lv_obj_create(screen_);
+  lv_obj_set_size(pageTrends_, 336, 340);
+  lv_obj_align(pageTrends_, LV_ALIGN_TOP_MID, 0, 92);
+  lv_obj_set_style_bg_opa(pageTrends_, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(pageTrends_, 0, 0);
+  lv_obj_set_style_pad_all(pageTrends_, 0, 0);
+  lv_obj_clear_flag(pageTrends_, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *cards[4];
+  const char *titles[4] = {"Heart Rate", "SpO2", "R-R Interval", "HRV"};
+  const char *icons[4] = {"HR", LV_SYMBOL_OK, LV_SYMBOL_LOOP, LV_SYMBOL_CHARGE};
+  const uint32_t colors[4] = {0xFF5A6B, 0x41C7F5, 0xFFC857, 0x5EE27A};
+  for (uint8_t i = 0; i < 4; ++i) {
+    cards[i] = createCard(pageTrends_, 158, 148);
+    lv_obj_align(cards[i], (i % 2) == 0 ? LV_ALIGN_TOP_LEFT : LV_ALIGN_TOP_RIGHT,
+                 0, (i / 2) * 164);
+    createCardTitle(cards[i], titles[i], icons[i], lv_color_hex(colors[i]));
+  }
+  hrTrendChart_ = createTrendChart(cards[0], lv_color_hex(0xFF5A6B), &hrSeries_, 45, 180);
+  spo2TrendChart_ = createTrendChart(cards[1], lv_color_hex(0x41C7F5), &spo2Series_, 85, 100);
+  rriTrendChart_ = createTrendChart(cards[2], lv_color_hex(0xFFC857), &rriSeries_, 300, 1400);
+  hrvTrendChart_ = createTrendChart(cards[3], lv_color_hex(0x5EE27A), &hrvSeries_, 0, 180);
+}
+
+void UiManager::createDevicePage() {
+  pageDevice_ = lv_obj_create(screen_);
+  lv_obj_set_size(pageDevice_, 336, 340);
+  lv_obj_align(pageDevice_, LV_ALIGN_TOP_MID, 0, 92);
+  lv_obj_set_style_bg_opa(pageDevice_, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(pageDevice_, 0, 0);
+  lv_obj_set_style_pad_all(pageDevice_, 0, 0);
+  lv_obj_clear_flag(pageDevice_, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *deviceCard = createCard(pageDevice_, 336, 154);
+  lv_obj_align(deviceCard, LV_ALIGN_TOP_MID, 0, 0);
+  createCardTitle(deviceCard, "Device", LV_SYMBOL_SETTINGS, lv_color_hex(0x41C7F5));
+  deviceInfoLabel_ = lv_label_create(deviceCard);
+  lv_label_set_text(deviceInfoLabel_, "Waiting for telemetry...");
+  lv_label_set_long_mode(deviceInfoLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(deviceInfoLabel_, 306);
+  lv_obj_align(deviceInfoLabel_, LV_ALIGN_TOP_LEFT, 0, 30);
+  lv_obj_set_style_text_color(deviceInfoLabel_, lv_color_hex(0xDDE6F3), 0);
+  lv_obj_set_style_text_font(deviceInfoLabel_, &lv_font_montserrat_16, 0);
+
+  lv_obj_t *rtcCard = createCard(pageDevice_, 336, 166);
+  lv_obj_align(rtcCard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  createCardTitle(rtcCard, "Set RTC", LV_SYMBOL_EDIT, lv_color_hex(0xFFC857));
+  rtcHelpLabel_ = lv_label_create(rtcCard);
+  lv_label_set_text(rtcHelpLabel_,
+                    "Serial command:\nRTC=YYYY-MM-DD HH:MM:SS\n\nExample:\nRTC=2026-05-30 14:05:00");
+  lv_label_set_long_mode(rtcHelpLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(rtcHelpLabel_, 306);
+  lv_obj_align(rtcHelpLabel_, LV_ALIGN_TOP_LEFT, 0, 30);
+  lv_obj_set_style_text_color(rtcHelpLabel_, lv_color_hex(0xDDE6F3), 0);
+  lv_obj_set_style_text_font(rtcHelpLabel_, &lv_font_montserrat_16, 0);
+}
+
+void UiManager::tick(const VitalData &data, bool bleConnected,
+                     uint8_t batteryPercent, const RtcSnapshot &rtc) {
   if (!initialized_) {
     return;
   }
@@ -268,7 +416,7 @@ void UiManager::tick(const VitalData &data, bool bleConnected, uint8_t batteryPe
   }
   lastRefreshMs_ = nowMs;
 
-  updateUi(data, bleConnected, batteryPercent);
+  updateUi(data, bleConnected, batteryPercent, rtc);
 
   const bool pulseState = ((nowMs / 500U) % 2U) == 0U;
   lv_obj_set_style_text_color(heartLabel_,
@@ -278,7 +426,17 @@ void UiManager::tick(const VitalData &data, bool bleConnected, uint8_t batteryPe
 }
 
 void UiManager::updateUi(const VitalData &data, bool bleConnected,
-                         uint8_t batteryPercent) {
+                         uint8_t batteryPercent, const RtcSnapshot &rtc) {
+  if (lastSnapshot_.rtcValid != rtc.valid ||
+      strcmp(lastSnapshot_.timeText, rtc.timeText) != 0 ||
+      strcmp(lastSnapshot_.dateText, rtc.dateText) != 0) {
+    lv_label_set_text(timeLabel_, rtc.valid ? rtc.timeText : "--:--:--");
+    lv_label_set_text(dateLabel_, rtc.valid ? rtc.dateText : "RTC not set");
+    lastSnapshot_.rtcValid = rtc.valid;
+    strncpy(lastSnapshot_.timeText, rtc.timeText, sizeof(lastSnapshot_.timeText));
+    strncpy(lastSnapshot_.dateText, rtc.dateText, sizeof(lastSnapshot_.dateText));
+  }
+
   if (lastSnapshot_.bleConnected != bleConnected) {
     lv_obj_set_style_text_color(bleLabel_,
                                 bleConnected ? lv_color_hex(0x44C5FF)
@@ -302,16 +460,17 @@ void UiManager::updateUi(const VitalData &data, bool bleConnected,
     return;
   }
 
-  setMetricValue(hrValueLabel_, "bpm", data.hr,
-                 (data.status & cfg::kStatusVitalsValid) != 0U);
+  const bool vitalsValid = (data.status & cfg::kStatusVitalsValid) != 0U;
+  char hrText[16];
+  snprintf(hrText, sizeof(hrText), vitalsValid && data.hr > 0 ? "%u" : "--", data.hr);
+  lv_label_set_text(hrValueLabel_, hrText);
 
-  if ((data.status & cfg::kStatusVitalsValid) != 0U && data.spo2_x100 > 0U) {
+  if (vitalsValid && data.spo2_x100 > 0U) {
     char text[20];
-    snprintf(text, sizeof(text), "%u.%02u %%", data.spo2_x100 / 100U,
-             data.spo2_x100 % 100U);
+    snprintf(text, sizeof(text), "%u%%", data.spo2_x100 / 100U);
     lv_label_set_text(spo2ValueLabel_, text);
   } else {
-    lv_label_set_text(spo2ValueLabel_, "--.-- %");
+    lv_label_set_text(spo2ValueLabel_, "--%");
   }
 
   setMetricValue(rriValueLabel_, "ms", data.rri,
@@ -319,6 +478,15 @@ void UiManager::updateUi(const VitalData &data, bool bleConnected,
   setMetricValue(hrvValueLabel_, "ms", data.hrv,
                  (data.status & cfg::kStatusHrvValid) != 0U);
   updateStatusText(data);
+  updateTrendCharts(data);
+
+  char deviceText[160];
+  snprintf(deviceText, sizeof(deviceText),
+           "Battery: %u%%\nBLE: %s\nRTC: %s\nVitals: %s",
+           batteryPercent, bleConnected ? "connected" : "advertising",
+           rtc.available ? (rtc.valid ? "running" : "needs set") : "offline",
+           vitalsValid ? "streaming" : "waiting");
+  lv_label_set_text(deviceInfoLabel_, deviceText);
 
   lastSnapshot_.data = data;
 }
@@ -349,6 +517,42 @@ void UiManager::setMetricValue(lv_obj_t *label, const char *suffix, uint16_t val
     snprintf(text, sizeof(text), "-- %s", suffix);
   }
   lv_label_set_text(label, text);
+}
+
+void UiManager::updateTrendCharts(const VitalData &data) {
+  const bool vitalsValid = (data.status & cfg::kStatusVitalsValid) != 0U;
+  const bool rriValid = (data.status & cfg::kStatusRriValid) != 0U;
+  const bool hrvValid = (data.status & cfg::kStatusHrvValid) != 0U;
+  lv_chart_set_next_value(hrTrendChart_, hrSeries_, vitalsValid ? data.hr : 0);
+  lv_chart_set_next_value(heroHrTrendChart_, heroHrSeries_, vitalsValid ? data.hr : 0);
+  lv_chart_set_next_value(spo2TrendChart_, spo2Series_,
+                          vitalsValid ? data.spo2_x100 / 100U : 0);
+  lv_chart_set_next_value(rriTrendChart_, rriSeries_, rriValid ? data.rri : 0);
+  lv_chart_set_next_value(hrvTrendChart_, hrvSeries_, hrvValid ? data.hrv : 0);
+  ++trendCount_;
+}
+
+void UiManager::setPage(uint8_t page) {
+  activePage_ = page;
+  if (page == 0) {
+    lv_obj_clear_flag(pageDashboard_, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(pageDashboard_, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (page == 1) {
+    lv_obj_clear_flag(pageTrends_, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(pageTrends_, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (page == 2) {
+    lv_obj_clear_flag(pageDevice_, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(pageDevice_, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  lv_obj_set_style_bg_color(navDashboard_, lv_color_hex(page == 0 ? 0x159BDE : 0x111722), 0);
+  lv_obj_set_style_bg_color(navTrends_, lv_color_hex(page == 1 ? 0x159BDE : 0x111722), 0);
+  lv_obj_set_style_bg_color(navDevice_, lv_color_hex(page == 2 ? 0x159BDE : 0x111722), 0);
 }
 
 void UiManager::setDisplayOn(bool on) {

@@ -28,6 +28,7 @@ constexpr uint8_t kFt3168Address = 0x38;
 constexpr uint8_t kTca9554Address = 0x20;
 constexpr uint8_t kQmi8658Address = 0x6B;
 constexpr uint8_t kAxp2101Address = 0x34;
+constexpr uint8_t kPcf85063Address = 0x51;
 
 constexpr int kI2cSdaPin = 15;
 constexpr int kI2cSclPin = 14;
@@ -73,5 +74,7 @@ constexpr uint16_t kMaxRriMs = 2000;
 constexpr uint16_t kLowBatteryThresholdPct = 20;
 constexpr uint8_t kMockBatteryStartPct = 92;
 constexpr uint32_t kBatteryPollPeriodMs = 5000;
+constexpr uint32_t kRtcPollPeriodMs = 1000;
+constexpr size_t kTrendBufferSize = 48;
 
 }  // namespace cfg

@@ -4,6 +4,7 @@
 #include "ble_manager.h"
 #include "config.h"
 #include "power_manager.h"
+#include "rtc_manager.h"
 #include "sensor_manager.h"
 #include "ui_manager.h"
 
@@ -15,6 +16,7 @@ BleManager g_bleManager;
 SensorManager g_sensorManager;
 UiManager g_uiManager;
 PowerManager g_powerManager;
+RtcManager g_rtcManager;
 
 void sensorTask(void *parameter) {
   auto *sensorManager = static_cast<SensorManager *>(parameter);
@@ -49,6 +51,7 @@ void uiTask(void *parameter) {
 
   for (;;) {
     g_powerManager.poll();
+    g_rtcManager.poll();
     if (g_powerManager.takeShortPress() || g_powerManager.takeBootPress()) {
       uiManager->toggleDisplay();
     }
@@ -57,7 +60,7 @@ void uiTask(void *parameter) {
       g_powerManager.shutdown();
     }
     uiManager->tick(dataWithBatteryStatus(g_sensorManager.latest()), g_bleManager.isConnected(),
-                    g_powerManager.batteryPercent());
+                    g_powerManager.batteryPercent(), g_rtcManager.snapshot());
     vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(cfg::kUiTaskPeriodMs));
   }
 }
@@ -86,6 +89,7 @@ void setup() {
 
   g_sensorManager.begin();
   g_powerManager.begin();
+  g_rtcManager.begin();
   g_bleManager.begin();
   g_uiManager.begin();
 
