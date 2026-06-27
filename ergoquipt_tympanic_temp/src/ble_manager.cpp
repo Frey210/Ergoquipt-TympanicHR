@@ -1,11 +1,11 @@
 #include "ble_manager.h"
 
-#include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLESecurity.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <esp_bt.h>
+#include <esp_mac.h>
 #include <esp_system.h>
 
 #include "config.h"
@@ -42,7 +42,6 @@ void BleManager::begin() {
   buildDeviceName(deviceName_, sizeof(deviceName_));
 
   BLEDevice::init(deviceName_);
-  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
 
   auto *security = new BLESecurity();
   security->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
@@ -58,7 +57,6 @@ void BleManager::begin() {
   g_characteristic = service->createCharacteristic(
       cfg::kCharacteristicUuid,
       BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  g_characteristic->addDescriptor(new BLE2902());
 
   service->start();
   BLEAdvertising *advertising = g_server->getAdvertising();

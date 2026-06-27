@@ -9,7 +9,7 @@ SensorManager g_sensorManager;
 
 namespace {
 
-constexpr uint8_t kConnectionLedPin = 7;
+constexpr uint8_t kConnectionLedPin = 4;
 constexpr uint32_t kBlinkIntervalMs = 500;
 
 bool g_ledState = false;
