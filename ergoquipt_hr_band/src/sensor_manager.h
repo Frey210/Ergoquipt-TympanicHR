@@ -10,7 +10,11 @@ class SensorManager {
  public:
   void begin();
   void sample();
+  void setEnabled(bool enabled);
+  void setFilteringMode(FilteringMode mode);
+  FilteringMode filteringMode() const;
   VitalData latest() const;
+  SensorDiagnostics diagnostics() const;
   uint8_t batteryPercent() const;
   bool sensorReady() const;
   bool fingerPresent() const;
@@ -35,14 +39,23 @@ class SensorManager {
   bool readSample(uint32_t &ir, uint32_t &red);
   void sampleMotion(uint32_t nowMs);
   void processSignals(uint32_t nowMs, uint32_t ir, uint32_t red);
-  bool detectPeak(uint32_t nowMs, uint32_t filteredIr, int32_t derivative);
+  bool detectPeak(uint32_t nowMs, uint32_t filteredIr, int32_t derivative,
+                  bool &rriAccepted);
   void updateSpo2();
+  void resetProcessingState();
   bool motionStable() const;
+  bool highMotion() const;
+  bool usesMotionAdaptiveSmoothing() const;
+  bool gatesPeaksWithMotion() const;
+  bool updatesSpo2DuringMotion() const;
+  const char *modeName() const;
 
   MAX30105 sensor_;
   SensorQMI8658 imu_;
   portMUX_TYPE dataMux_ = portMUX_INITIALIZER_UNLOCKED;
   VitalData latest_;
+  SensorDiagnostics diagnostics_;
+  FilteringMode filteringMode_ = FilteringMode::M2MotionAdaptive;
 
   CircularRriBuffer rriBuffer_;
   uint32_t irWindow_[cfg::kSignalWindowSize] = {0};
@@ -55,18 +68,26 @@ class SensorManager {
 
   uint32_t baselineIr_ = 0;
   uint32_t lastFilteredIr_ = 0;
+  uint32_t lastPeakAmplitude_ = 0;
   int32_t previousDerivative_ = 0;
   uint32_t lastPeakMs_ = 0;
+  uint32_t lastAcceptedRriMs_ = 0;
   uint32_t sampleCounter_ = 0;
   uint32_t lastDebugLogMs_ = 0;
   uint32_t lastImuSampleMs_ = 0;
   uint32_t lastIrSample_ = 0;
   uint32_t lastRedSample_ = 0;
+  uint32_t lastNlmsIr_ = 0;
   uint8_t partId_ = 0;
   float accelMagnitudeG_ = 1.0f;
   float motionScore_ = 0.0f;
+  float accelX_ = 0.0f;
+  float accelY_ = 0.0f;
+  float accelZ_ = 0.0f;
+  float accelMagnitudeRawG_ = 1.0f;
 
   bool sensorReady_ = false;
   bool imuReady_ = false;
   bool fingerPresent_ = false;
+  bool enabled_ = true;
 };

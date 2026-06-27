@@ -181,6 +181,10 @@ bool SensorManager::readSample(uint32_t &ir, uint32_t &red) {
 }
 
 void SensorManager::sample() {
+  if (!enabled_) {
+    return;
+  }
+
   const uint32_t nowMs = millis();
   uint32_t ir = 0;
   uint32_t red = 0;
@@ -203,13 +207,38 @@ void SensorManager::sample() {
     const VitalData snapshot = latest();
     Serial.printf(
         "Vitals hr=%u spo2=%u.%02u rri=%u hrv=%u status=0x%02X ir=%lu red=%lu "
-        "finger=%s sensor=%s part=0x%02X motion=%.3f imu=%s\n",
+        "finger=%s sensor=%s part=0x%02X mode=%s motion=%.3f imu=%s peak=%u rri_ok=%u\n",
         snapshot.hr, snapshot.spo2_x100 / 100U, snapshot.spo2_x100 % 100U,
         snapshot.rri, snapshot.hrv, snapshot.status,
         static_cast<unsigned long>(lastIrSample_),
         static_cast<unsigned long>(lastRedSample_),
         fingerPresent_ ? "yes" : "no", sensorReady_ ? "ok" : "fail", partId_,
-        static_cast<double>(motionScore_), imuReady_ ? "ok" : "missing");
+        modeName(), static_cast<double>(motionScore_), imuReady_ ? "ok" : "missing",
+        diagnostics_.peakDetected ? 1U : 0U, diagnostics_.rriAccepted ? 1U : 0U);
+  }
+}
+
+void SensorManager::setEnabled(bool enabled) {
+  if (enabled_ == enabled) {
+    return;
+  }
+
+  enabled_ = enabled;
+  if (!sensorReady_) {
+    return;
+  }
+
+  if (g_i2cMutex != nullptr) {
+    xSemaphoreTake(g_i2cMutex, portMAX_DELAY);
+  }
+  if (enabled_) {
+    sensor_.wakeUp();
+    sensor_.clearFIFO();
+  } else {
+    sensor_.shutDown();
+  }
+  if (g_i2cMutex != nullptr) {
+    xSemaphoreGive(g_i2cMutex);
   }
 }
 
@@ -237,6 +266,10 @@ void SensorManager::sampleMotion(uint32_t nowMs) {
   }
 
   const float magnitude = sqrtf(ax * ax + ay * ay + az * az);
+  accelX_ = ax;
+  accelY_ = ay;
+  accelZ_ = az;
+  accelMagnitudeRawG_ = magnitude;
   const float delta = fabsf(magnitude - accelMagnitudeG_);
   accelMagnitudeG_ = accelMagnitudeG_ * 0.90f + magnitude * 0.10f;
   motionScore_ = motionScore_ * 0.85f + delta * 0.15f;
@@ -254,8 +287,21 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
 
   const uint32_t windowIr = averageWindow(irWindow_, cfg::kSignalWindowSize);
   const uint32_t filteredRed = averageWindow(redWindow_, cfg::kSignalWindowSize);
-  const uint32_t filteredIr =
-      motionStable() ? windowIr : static_cast<uint32_t>((lastFilteredIr_ * 3U + windowIr) / 4U);
+  uint32_t filteredIr = windowIr;
+  if (usesMotionAdaptiveSmoothing() && !motionStable()) {
+    filteredIr = static_cast<uint32_t>((lastFilteredIr_ * 3U + windowIr) / 4U);
+  } else if (filteringMode_ == FilteringMode::M3AdaptiveNoise && imuReady_) {
+    if (lastNlmsIr_ == 0U) {
+      lastNlmsIr_ = windowIr;
+    }
+    const float motionNoise = constrain((motionScore_ - cfg::kStillMotionThreshold) /
+                                            cfg::kHighMotionThreshold,
+                                        0.0f, 1.0f);
+    const float alpha = 0.55f + (0.35f * motionNoise);
+    filteredIr = static_cast<uint32_t>((static_cast<float>(lastNlmsIr_) * alpha) +
+                                       (static_cast<float>(windowIr) * (1.0f - alpha)));
+    lastNlmsIr_ = filteredIr;
+  }
 
   if (baselineIr_ == 0) {
     baselineIr_ = filteredIr;
@@ -266,8 +312,10 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
   fingerPresent_ = filteredIr > cfg::kFingerIrThreshold;
   const int32_t derivative =
       static_cast<int32_t>(filteredIr) - static_cast<int32_t>(lastFilteredIr_);
-  const bool peakDetected = motionScore_ < cfg::kHighMotionThreshold &&
-                            detectPeak(nowMs, filteredIr, derivative);
+  const bool peakAllowed = !gatesPeaksWithMotion() || !highMotion();
+  bool rriAccepted = false;
+  const bool peakDetected =
+      peakAllowed && detectPeak(nowMs, filteredIr, derivative, rriAccepted);
   lastFilteredIr_ = filteredIr;
   previousDerivative_ = derivative;
   ++sampleCounter_;
@@ -284,11 +332,24 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
       updated.status |= cfg::kStatusSensorError;
     }
     portENTER_CRITICAL(&dataMux_);
+    diagnostics_.irRaw = ir;
+    diagnostics_.redRaw = red;
+    diagnostics_.irFiltered = filteredIr;
+    diagnostics_.accelX = accelX_;
+    diagnostics_.accelY = accelY_;
+    diagnostics_.accelZ = accelZ_;
+    diagnostics_.accelMagnitude = accelMagnitudeRawG_;
+    diagnostics_.motionScore = motionScore_;
+    diagnostics_.imuReady = imuReady_;
+    diagnostics_.fingerPresent = fingerPresent_;
+    diagnostics_.peakDetected = peakDetected;
+    diagnostics_.rriAccepted = rriAccepted;
+    diagnostics_.motionState = highMotion() ? 2U : (motionStable() ? 0U : 1U);
     latest_ = updated;
     portEXIT_CRITICAL(&dataMux_);
     return;
   } else {
-    if (motionStable()) {
+    if (updatesSpo2DuringMotion() || motionStable()) {
       updateSpo2();
     }
     updated = latest();
@@ -304,6 +365,19 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
   }
 
   portENTER_CRITICAL(&dataMux_);
+  diagnostics_.irRaw = ir;
+  diagnostics_.redRaw = red;
+  diagnostics_.irFiltered = filteredIr;
+  diagnostics_.accelX = accelX_;
+  diagnostics_.accelY = accelY_;
+  diagnostics_.accelZ = accelZ_;
+  diagnostics_.accelMagnitude = accelMagnitudeRawG_;
+  diagnostics_.motionScore = motionScore_;
+  diagnostics_.imuReady = imuReady_;
+  diagnostics_.fingerPresent = fingerPresent_;
+  diagnostics_.peakDetected = peakDetected;
+  diagnostics_.rriAccepted = rriAccepted;
+  diagnostics_.motionState = highMotion() ? 2U : (motionStable() ? 0U : 1U);
   latest_ = updated;
   portEXIT_CRITICAL(&dataMux_);
 
@@ -312,7 +386,8 @@ void SensorManager::processSignals(uint32_t nowMs, uint32_t ir, uint32_t red) {
 }
 
 bool SensorManager::detectPeak(uint32_t nowMs, uint32_t filteredIr,
-                               int32_t derivative) {
+                               int32_t derivative, bool &rriAccepted) {
+  rriAccepted = false;
   if (!fingerPresent_) {
     lastPeakMs_ = 0;
     return false;
@@ -320,31 +395,53 @@ bool SensorManager::detectPeak(uint32_t nowMs, uint32_t filteredIr,
 
   const uint32_t amplitude = (filteredIr > baselineIr_) ? (filteredIr - baselineIr_) : 0;
   const uint32_t adaptiveThreshold =
-      std::max<uint32_t>(baselineIr_ / (motionStable() ? 45U : 32U), 120U);
+      std::max<uint32_t>(baselineIr_ / (motionStable() || filteringMode_ == FilteringMode::M0NoImu
+                                            ? 45U
+                                            : 32U),
+                         120U);
 
   if (!(previousDerivative_ > 0 && derivative <= 0 &&
         amplitude > adaptiveThreshold)) {
     return false;
   }
 
-  if (lastPeakMs_ != 0) {
-    const uint32_t rri = nowMs - lastPeakMs_;
-    if (rri >= cfg::kMinRriMs && rri <= cfg::kMaxRriMs) {
-      rriBuffer_.push(static_cast<uint16_t>(rri));
-
-      const uint16_t meanRri = rriBuffer_.mean();
-      const uint16_t bpm = meanRri > 0 ? static_cast<uint16_t>(60000U / meanRri) : 0;
-      const uint16_t rmssd = rriBuffer_.rmssd();
-
-      portENTER_CRITICAL(&dataMux_);
-      latest_.rri = static_cast<uint16_t>(rri);
-      latest_.hr = bpm;
-      latest_.hrv = rmssd;
-      portEXIT_CRITICAL(&dataMux_);
-    }
+  if (lastPeakMs_ == 0U) {
+    lastPeakMs_ = nowMs;
+    lastPeakAmplitude_ = amplitude;
+    return true;
   }
 
+  const uint32_t rri = nowMs - lastPeakMs_;
+  if (rri < cfg::kMinRriMs) {
+    if (amplitude > lastPeakAmplitude_) {
+      lastPeakMs_ = nowMs;
+      lastPeakAmplitude_ = amplitude;
+    }
+    return true;
+  }
+
+  if (rri > cfg::kMaxRriMs) {
+    lastPeakMs_ = nowMs;
+    lastPeakAmplitude_ = amplitude;
+    return true;
+  }
+
+  rriBuffer_.push(static_cast<uint16_t>(rri));
+
+  const uint16_t meanRri = rriBuffer_.mean();
+  const uint16_t bpm = meanRri > 0 ? static_cast<uint16_t>(60000U / meanRri) : 0;
+  const uint16_t rmssd = rriBuffer_.rmssd();
+
+  portENTER_CRITICAL(&dataMux_);
+  latest_.rri = static_cast<uint16_t>(rri);
+  latest_.hr = bpm;
+  latest_.hrv = rmssd;
+  portEXIT_CRITICAL(&dataMux_);
+
   lastPeakMs_ = nowMs;
+  lastPeakAmplitude_ = amplitude;
+  lastAcceptedRriMs_ = nowMs;
+  rriAccepted = true;
   return true;
 }
 
@@ -391,12 +488,96 @@ bool SensorManager::motionStable() const {
   return !imuReady_ || motionScore_ <= cfg::kStillMotionThreshold;
 }
 
+bool SensorManager::highMotion() const {
+  return imuReady_ && motionScore_ >= cfg::kHighMotionThreshold;
+}
+
+bool SensorManager::usesMotionAdaptiveSmoothing() const {
+  return filteringMode_ == FilteringMode::M2MotionAdaptive;
+}
+
+bool SensorManager::gatesPeaksWithMotion() const {
+  return filteringMode_ == FilteringMode::M1MotionGating ||
+         filteringMode_ == FilteringMode::M2MotionAdaptive ||
+         filteringMode_ == FilteringMode::M3AdaptiveNoise;
+}
+
+bool SensorManager::updatesSpo2DuringMotion() const {
+  return filteringMode_ == FilteringMode::M0NoImu;
+}
+
 VitalData SensorManager::latest() const {
   VitalData snapshot;
   portENTER_CRITICAL(const_cast<portMUX_TYPE *>(&dataMux_));
   snapshot = latest_;
   portEXIT_CRITICAL(const_cast<portMUX_TYPE *>(&dataMux_));
   return snapshot;
+}
+
+SensorDiagnostics SensorManager::diagnostics() const {
+  SensorDiagnostics snapshot;
+  portENTER_CRITICAL(const_cast<portMUX_TYPE *>(&dataMux_));
+  snapshot = diagnostics_;
+  portEXIT_CRITICAL(const_cast<portMUX_TYPE *>(&dataMux_));
+  return snapshot;
+}
+
+void SensorManager::setFilteringMode(FilteringMode mode) {
+  if (filteringMode() == mode) {
+    return;
+  }
+  resetProcessingState();
+  portENTER_CRITICAL(&dataMux_);
+  filteringMode_ = mode;
+  portEXIT_CRITICAL(&dataMux_);
+  Serial.printf("Sensor: filtering mode=%s\n", modeName());
+}
+
+FilteringMode SensorManager::filteringMode() const {
+  portENTER_CRITICAL(const_cast<portMUX_TYPE *>(&dataMux_));
+  const FilteringMode mode = filteringMode_;
+  portEXIT_CRITICAL(const_cast<portMUX_TYPE *>(&dataMux_));
+  return mode;
+}
+
+const char *SensorManager::modeName() const {
+  switch (filteringMode_) {
+    case FilteringMode::M0NoImu:
+      return "M0";
+    case FilteringMode::M1MotionGating:
+      return "M1";
+    case FilteringMode::M2MotionAdaptive:
+      return "M2";
+    case FilteringMode::M3AdaptiveNoise:
+      return "M3";
+    default:
+      return "M?";
+  }
+}
+
+void SensorManager::resetProcessingState() {
+  portENTER_CRITICAL(&dataMux_);
+  latest_ = VitalData{};
+  diagnostics_.peakDetected = false;
+  diagnostics_.rriAccepted = false;
+  std::fill_n(irWindow_, cfg::kSignalWindowSize, 0U);
+  std::fill_n(redWindow_, cfg::kSignalWindowSize, 0U);
+  std::fill_n(spo2IrWindow_, cfg::kSpo2WindowSize, 0U);
+  std::fill_n(spo2RedWindow_, cfg::kSpo2WindowSize, 0U);
+  rriBuffer_ = CircularRriBuffer{};
+  signalIndex_ = 0;
+  spo2Index_ = 0;
+  spo2Count_ = 0;
+  baselineIr_ = 0;
+  lastFilteredIr_ = 0;
+  lastPeakAmplitude_ = 0;
+  previousDerivative_ = 0;
+  lastPeakMs_ = 0;
+  lastAcceptedRriMs_ = 0;
+  lastNlmsIr_ = 0;
+  sampleCounter_ = 0;
+  fingerPresent_ = false;
+  portEXIT_CRITICAL(&dataMux_);
 }
 
 uint8_t SensorManager::batteryPercent() const { return cfg::kMockBatteryStartPct; }

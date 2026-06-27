@@ -8,6 +8,7 @@ class BleManager {
  public:
   void begin();
   void publishLatest(const VitalData &data);
+  void setEnabled(bool enabled);
   bool isConnected() const;
   const char *deviceName() const;
 
@@ -15,6 +16,7 @@ class BleManager {
   void packPayload(const VitalData &data, uint8_t payload[cfg::kPayloadSize]);
 
   bool deviceConnected_ = false;
+  bool enabled_ = true;
   char deviceName_[24] = {0};
   uint8_t sequenceCounter_ = 0;
 

@@ -14,6 +14,29 @@ struct VitalData {
   uint8_t status = 0;
 };
 
+enum class FilteringMode : uint8_t {
+  M0NoImu = 0,
+  M1MotionGating = 1,
+  M2MotionAdaptive = 2,
+  M3AdaptiveNoise = 3,
+};
+
+struct SensorDiagnostics {
+  uint32_t irRaw = 0;
+  uint32_t redRaw = 0;
+  uint32_t irFiltered = 0;
+  float accelX = 0.0f;
+  float accelY = 0.0f;
+  float accelZ = 0.0f;
+  float accelMagnitude = 0.0f;
+  float motionScore = 0.0f;
+  bool imuReady = false;
+  bool fingerPresent = false;
+  bool peakDetected = false;
+  bool rriAccepted = false;
+  uint8_t motionState = 0;
+};
+
 namespace cfg {
 
 constexpr char kDeviceNamePrefix[] = "Ergoquipt-HR";
@@ -48,6 +71,10 @@ constexpr uint8_t kExpanderPmuIrqPin = 5;
 constexpr uint8_t kExpanderPowerButtonPin = 4;
 constexpr uint8_t kExpanderPowerHoldPin1 = 1;
 constexpr uint8_t kExpanderPowerHoldPin2 = 2;
+constexpr uint8_t kExpanderSdEnablePin = 7;
+constexpr int kSdClkPin = 2;
+constexpr int kSdCmdPin = 1;
+constexpr int kSdDataPin = 3;
 
 constexpr uint8_t kPayloadSize = 12;
 
@@ -59,6 +86,7 @@ constexpr uint8_t kStatusLowBattery = 1U << 4;
 
 constexpr uint32_t kSensorTaskPeriodMs = 10;
 constexpr uint32_t kBlePublishPeriodMs = 1000;
+constexpr uint32_t kRecordPeriodMs = 1000;
 constexpr uint32_t kUiTaskPeriodMs = 33;
 constexpr uint32_t kUiRefreshPeriodMs = 1000;
 
@@ -75,6 +103,7 @@ constexpr uint16_t kLowBatteryThresholdPct = 20;
 constexpr uint8_t kMockBatteryStartPct = 92;
 constexpr uint32_t kBatteryPollPeriodMs = 5000;
 constexpr uint32_t kRtcPollPeriodMs = 1000;
+constexpr uint32_t kSoftSleepLongPressMs = 3000;
 constexpr size_t kTrendBufferSize = 48;
 
 }  // namespace cfg

@@ -103,6 +103,10 @@ void BleManager::packPayload(const VitalData &data,
 }
 
 void BleManager::publishLatest(const VitalData &data) {
+  if (!enabled_) {
+    return;
+  }
+
   uint8_t payload[cfg::kPayloadSize] = {0};
   packPayload(data, payload);
 
@@ -118,6 +122,23 @@ void BleManager::publishLatest(const VitalData &data) {
   Serial.printf("BLE status=%s seq=%u hr=%u rri=%u hrv=%u\n",
                 deviceConnected_ ? "connected" : "idle",
                 static_cast<unsigned>(payload[9]), data.hr, data.rri, data.hrv);
+}
+
+void BleManager::setEnabled(bool enabled) {
+  if (enabled_ == enabled) {
+    return;
+  }
+
+  enabled_ = enabled;
+  if (g_server == nullptr) {
+    return;
+  }
+
+  if (enabled_) {
+    g_server->getAdvertising()->start();
+  } else {
+    g_server->getAdvertising()->stop();
+  }
 }
 
 bool BleManager::isConnected() const { return deviceConnected_; }

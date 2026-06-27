@@ -27,6 +27,7 @@ class PowerManager {
   void updateBattery(uint32_t nowMs);
   void pollPmuIrq();
   void pollBootButton(uint32_t nowMs);
+  void pollExpanderPowerButton(uint32_t nowMs);
 
   XPowersPMU power_;
   uint8_t expanderConfig_ = 0xFF;
@@ -34,9 +35,13 @@ class PowerManager {
   uint8_t batteryPercent_ = cfg::kMockBatteryStartPct;
   uint32_t lastBatteryPollMs_ = 0;
   uint32_t lastBootEdgeMs_ = 0;
+  uint32_t lastExpanderEdgeMs_ = 0;
+  uint32_t expanderPressStartMs_ = 0;
   bool pmuReady_ = false;
   bool expanderReady_ = false;
   bool bootWasPressed_ = false;
+  bool expanderPowerWasPressed_ = false;
+  bool expanderLongReported_ = false;
   bool shortPressPending_ = false;
   bool longPressPending_ = false;
   bool bootPressPending_ = false;

@@ -22,6 +22,21 @@ constexpr size_t kDrawBufferLines = 40;
 constexpr uint8_t kFt3168RegNumTouches = 0x02;
 constexpr uint8_t kFt3168RegXHigh = 0x03;
 
+const char *filteringModeName(FilteringMode mode) {
+  switch (mode) {
+    case FilteringMode::M0NoImu:
+      return "M0";
+    case FilteringMode::M1MotionGating:
+      return "M1";
+    case FilteringMode::M2MotionAdaptive:
+      return "M2";
+    case FilteringMode::M3AdaptiveNoise:
+      return "M3";
+    default:
+      return "M?";
+  }
+}
+
 bool readTouchPoint(uint16_t &x, uint16_t &y) {
   uint8_t pointCount = 0;
 
@@ -215,6 +230,7 @@ void UiManager::createScreen() {
   createDashboard();
   createTrends();
   createDevicePage();
+  createRecordPage();
   setPage(0);
   lv_scr_load(screen_);
 }
@@ -232,19 +248,19 @@ void UiManager::createHeader() {
 
   dateLabel_ = lv_label_create(screen_);
   lv_label_set_text(dateLabel_, "RTC not set");
-  lv_obj_align(dateLabel_, LV_ALIGN_TOP_RIGHT, 0, 24);
+  lv_obj_align(dateLabel_, LV_ALIGN_TOP_RIGHT, -78, 26);
   lv_obj_set_style_text_color(dateLabel_, lv_color_hex(0x6F7C8D), 0);
   lv_obj_set_style_text_font(dateLabel_, &lv_font_montserrat_16, 0);
 
   bleLabel_ = lv_label_create(screen_);
   lv_label_set_text(bleLabel_, LV_SYMBOL_BLUETOOTH);
-  lv_obj_align(bleLabel_, LV_ALIGN_TOP_LEFT, 238, 4);
+  lv_obj_align(bleLabel_, LV_ALIGN_TOP_RIGHT, -54, 26);
   lv_obj_set_style_text_color(bleLabel_, lv_color_hex(0x566070), 0);
   lv_obj_set_style_text_font(bleLabel_, &lv_font_montserrat_20, 0);
 
   batteryLabel_ = lv_label_create(screen_);
   lv_label_set_text(batteryLabel_, LV_SYMBOL_BATTERY_FULL " 0%");
-  lv_obj_align(batteryLabel_, LV_ALIGN_TOP_LEFT, 266, 6);
+  lv_obj_align(batteryLabel_, LV_ALIGN_TOP_RIGHT, 0, 28);
   lv_obj_set_style_text_color(batteryLabel_, lv_color_hex(0xD9DEE5), 0);
   lv_obj_set_style_text_font(batteryLabel_, &lv_font_montserrat_16, 0);
 }
@@ -252,9 +268,15 @@ void UiManager::createHeader() {
 void UiManager::createNavigation() {
   navDashboard_ = createNavButton(screen_, "Today");
   navTrends_ = createNavButton(screen_, "Trends");
+  navRecord_ = createNavButton(screen_, "Record");
   navDevice_ = createNavButton(screen_, "Device");
+  lv_obj_set_size(navDashboard_, 78, 34);
+  lv_obj_set_size(navTrends_, 78, 34);
+  lv_obj_set_size(navRecord_, 78, 34);
+  lv_obj_set_size(navDevice_, 78, 34);
   lv_obj_align(navDashboard_, LV_ALIGN_TOP_LEFT, 0, 52);
-  lv_obj_align(navTrends_, LV_ALIGN_TOP_MID, 0, 52);
+  lv_obj_align(navTrends_, LV_ALIGN_TOP_LEFT, 84, 52);
+  lv_obj_align(navRecord_, LV_ALIGN_TOP_LEFT, 168, 52);
   lv_obj_align(navDevice_, LV_ALIGN_TOP_RIGHT, 0, 52);
 
   lv_obj_add_event_cb(navDashboard_, [](lv_event_t *event) {
@@ -263,8 +285,11 @@ void UiManager::createNavigation() {
   lv_obj_add_event_cb(navTrends_, [](lv_event_t *event) {
     static_cast<UiManager *>(lv_event_get_user_data(event))->setPage(1);
   }, LV_EVENT_CLICKED, this);
-  lv_obj_add_event_cb(navDevice_, [](lv_event_t *event) {
+  lv_obj_add_event_cb(navRecord_, [](lv_event_t *event) {
     static_cast<UiManager *>(lv_event_get_user_data(event))->setPage(2);
+  }, LV_EVENT_CLICKED, this);
+  lv_obj_add_event_cb(navDevice_, [](lv_event_t *event) {
+    static_cast<UiManager *>(lv_event_get_user_data(event))->setPage(3);
   }, LV_EVENT_CLICKED, this);
 }
 
@@ -392,8 +417,91 @@ void UiManager::createDevicePage() {
   lv_obj_set_style_text_font(rtcHelpLabel_, &lv_font_montserrat_16, 0);
 }
 
+void UiManager::createRecordPage() {
+  pageRecord_ = lv_obj_create(screen_);
+  lv_obj_set_size(pageRecord_, 336, 340);
+  lv_obj_align(pageRecord_, LV_ALIGN_TOP_MID, 0, 92);
+  lv_obj_set_style_bg_opa(pageRecord_, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(pageRecord_, 0, 0);
+  lv_obj_set_style_pad_all(pageRecord_, 0, 0);
+  lv_obj_clear_flag(pageRecord_, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *recordCard = createCard(pageRecord_, 336, 286);
+  lv_obj_align(recordCard, LV_ALIGN_TOP_MID, 0, 0);
+  createCardTitle(recordCard, "Local CSV Recording", LV_SYMBOL_SAVE,
+                  lv_color_hex(0x5EE27A));
+
+  recordStatusLabel_ = lv_label_create(recordCard);
+  lv_label_set_text(recordStatusLabel_, "SD recorder initializing...");
+  lv_label_set_long_mode(recordStatusLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(recordStatusLabel_, 306);
+  lv_obj_align(recordStatusLabel_, LV_ALIGN_TOP_LEFT, 0, 30);
+  lv_obj_set_style_text_color(recordStatusLabel_, lv_color_hex(0xDDE6F3), 0);
+  lv_obj_set_style_text_font(recordStatusLabel_, &lv_font_montserrat_14, 0);
+
+  lv_obj_t *modeLabel = lv_label_create(recordCard);
+  lv_label_set_text(modeLabel, "Filtering mode");
+  lv_obj_align(modeLabel, LV_ALIGN_TOP_LEFT, 0, 116);
+  lv_obj_set_style_text_color(modeLabel, lv_color_hex(0x9EABB9), 0);
+  lv_obj_set_style_text_font(modeLabel, &lv_font_montserrat_14, 0);
+
+  const char *labels[] = {"M0", "M1", "M2", "M3"};
+  for (uint8_t i = 0; i < 4; ++i) {
+    modeButtons_[i] = lv_btn_create(recordCard);
+    lv_obj_set_size(modeButtons_[i], 68, 36);
+    lv_obj_align(modeButtons_[i], LV_ALIGN_TOP_LEFT, i * 78, 138);
+    lv_obj_set_style_radius(modeButtons_[i], 18, 0);
+    lv_obj_set_style_bg_color(modeButtons_[i], lv_color_hex(0x111722), 0);
+    lv_obj_set_style_border_width(modeButtons_[i], 1, 0);
+    lv_obj_set_style_border_color(modeButtons_[i], lv_color_hex(0x243244), 0);
+
+    lv_obj_t *label = lv_label_create(modeButtons_[i]);
+    lv_label_set_text(label, labels[i]);
+    lv_obj_center(label);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+    lv_obj_add_event_cb(modeButtons_[i], [](lv_event_t *event) {
+      auto *ui = static_cast<UiManager *>(lv_event_get_user_data(event));
+      lv_obj_t *target = lv_event_get_target(event);
+      for (uint8_t index = 0; index < 4; ++index) {
+        if (ui->modeButtons_[index] == target) {
+          ui->pendingFilteringMode_ = static_cast<FilteringMode>(index);
+          ui->filteringModePending_ = true;
+          break;
+        }
+      }
+    }, LV_EVENT_CLICKED, this);
+  }
+
+  recordButton_ = lv_btn_create(recordCard);
+  lv_obj_set_size(recordButton_, 200, 44);
+  lv_obj_align(recordButton_, LV_ALIGN_TOP_MID, 0, 198);
+  lv_obj_set_style_radius(recordButton_, 22, 0);
+  lv_obj_set_style_bg_color(recordButton_, lv_color_hex(0x159BDE), 0);
+  recordButtonLabel_ = lv_label_create(recordButton_);
+  lv_label_set_text(recordButtonLabel_, "Start Recording");
+  lv_obj_center(recordButtonLabel_);
+  lv_obj_set_style_text_font(recordButtonLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_add_event_cb(recordButton_, [](lv_event_t *event) {
+    static_cast<UiManager *>(lv_event_get_user_data(event))->recordingTogglePending_ = true;
+  }, LV_EVENT_CLICKED, this);
+
+  lv_obj_t *infoCard = createCard(pageRecord_, 336, 42);
+  lv_obj_align(infoCard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_t *infoLabel = lv_label_create(infoCard);
+  lv_label_set_text(infoLabel,
+                    "CSV: mode + PPG/IMU diagnostics. BLE unchanged.");
+  lv_label_set_long_mode(infoLabel, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(infoLabel, 306);
+  lv_obj_align(infoLabel, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_style_text_color(infoLabel, lv_color_hex(0x9EABB9), 0);
+  lv_obj_set_style_text_font(infoLabel, &lv_font_montserrat_14, 0);
+}
+
 void UiManager::tick(const VitalData &data, bool bleConnected,
-                     uint8_t batteryPercent, const RtcSnapshot &rtc) {
+                     uint8_t batteryPercent, const RtcSnapshot &rtc,
+                     const char *bleDeviceName,
+                     const RecordingSnapshot &recording,
+                     FilteringMode filteringMode) {
   if (!initialized_) {
     return;
   }
@@ -416,7 +524,8 @@ void UiManager::tick(const VitalData &data, bool bleConnected,
   }
   lastRefreshMs_ = nowMs;
 
-  updateUi(data, bleConnected, batteryPercent, rtc);
+  updateUi(data, bleConnected, batteryPercent, rtc, bleDeviceName, recording,
+           filteringMode);
 
   const bool pulseState = ((nowMs / 500U) % 2U) == 0U;
   lv_obj_set_style_text_color(heartLabel_,
@@ -426,7 +535,10 @@ void UiManager::tick(const VitalData &data, bool bleConnected,
 }
 
 void UiManager::updateUi(const VitalData &data, bool bleConnected,
-                         uint8_t batteryPercent, const RtcSnapshot &rtc) {
+                         uint8_t batteryPercent, const RtcSnapshot &rtc,
+                         const char *bleDeviceName,
+                         const RecordingSnapshot &recording,
+                         FilteringMode filteringMode) {
   if (lastSnapshot_.rtcValid != rtc.valid ||
       strcmp(lastSnapshot_.timeText, rtc.timeText) != 0 ||
       strcmp(lastSnapshot_.dateText, rtc.dateText) != 0) {
@@ -456,6 +568,8 @@ void UiManager::updateUi(const VitalData &data, bool bleConnected,
     lastSnapshot_.batteryPercent = batteryPercent;
   }
 
+  updateRecordingUi(recording, filteringMode);
+
   if (memcmp(&lastSnapshot_.data, &data, sizeof(VitalData)) == 0) {
     return;
   }
@@ -482,13 +596,60 @@ void UiManager::updateUi(const VitalData &data, bool bleConnected,
 
   char deviceText[160];
   snprintf(deviceText, sizeof(deviceText),
-           "Battery: %u%%\nBLE: %s\nRTC: %s\nVitals: %s",
+           "Name: %s\nBattery: %u%%\nBLE: %s\nRTC: %s\nVitals: %s",
+           bleDeviceName != nullptr ? bleDeviceName : "unknown",
            batteryPercent, bleConnected ? "connected" : "advertising",
            rtc.available ? (rtc.valid ? "running" : "needs set") : "offline",
            vitalsValid ? "streaming" : "waiting");
   lv_label_set_text(deviceInfoLabel_, deviceText);
 
   lastSnapshot_.data = data;
+}
+
+void UiManager::updateRecordingUi(const RecordingSnapshot &recording,
+                                  FilteringMode filteringMode) {
+  const bool modeChanged = lastSnapshot_.filteringMode != filteringMode;
+  if (lastSnapshot_.recording == recording.recording &&
+      lastSnapshot_.sdReady == recording.sdReady &&
+      lastSnapshot_.rowsWritten == recording.rowsWritten &&
+      !modeChanged &&
+      strcmp(lastSnapshot_.recordFileName, recording.fileName) == 0 &&
+      strcmp(lastSnapshot_.recordStatusText, recording.statusText) == 0) {
+    return;
+  }
+
+  char text[180];
+  snprintf(text, sizeof(text),
+           "SD: %s | Mode: %s | %s\nFile: %s\nRows: %lu | %s",
+           recording.sdReady ? "ready" : "not ready",
+           filteringModeName(filteringMode),
+           recording.recording ? "recording" : "idle",
+           recording.fileName[0] != '\0' ? recording.fileName : "-",
+           static_cast<unsigned long>(recording.rowsWritten),
+           recording.statusText);
+  lv_label_set_text(recordStatusLabel_, text);
+  lv_label_set_text(recordButtonLabel_,
+                    recording.recording ? "Stop Recording" : "Start Recording");
+  lv_obj_set_style_bg_color(recordButton_,
+                            lv_color_hex(recording.recording ? 0xC43D4B : 0x159BDE),
+                            0);
+
+  for (uint8_t index = 0; index < 4; ++index) {
+    const bool active = static_cast<uint8_t>(filteringMode) == index;
+    lv_obj_set_style_bg_color(modeButtons_[index],
+                              lv_color_hex(active ? 0x5EE27A : 0x111722), 0);
+    lv_obj_set_style_text_color(lv_obj_get_child(modeButtons_[index], 0),
+                                lv_color_hex(active ? 0x071019 : 0xDDE6F3), 0);
+  }
+
+  lastSnapshot_.recording = recording.recording;
+  lastSnapshot_.sdReady = recording.sdReady;
+  lastSnapshot_.filteringMode = filteringMode;
+  lastSnapshot_.rowsWritten = recording.rowsWritten;
+  strncpy(lastSnapshot_.recordFileName, recording.fileName,
+          sizeof(lastSnapshot_.recordFileName));
+  strncpy(lastSnapshot_.recordStatusText, recording.statusText,
+          sizeof(lastSnapshot_.recordStatusText));
 }
 
 void UiManager::updateStatusText(const VitalData &data) {
@@ -545,6 +706,11 @@ void UiManager::setPage(uint8_t page) {
     lv_obj_add_flag(pageTrends_, LV_OBJ_FLAG_HIDDEN);
   }
   if (page == 2) {
+    lv_obj_clear_flag(pageRecord_, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(pageRecord_, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (page == 3) {
     lv_obj_clear_flag(pageDevice_, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(pageDevice_, LV_OBJ_FLAG_HIDDEN);
@@ -552,7 +718,23 @@ void UiManager::setPage(uint8_t page) {
 
   lv_obj_set_style_bg_color(navDashboard_, lv_color_hex(page == 0 ? 0x159BDE : 0x111722), 0);
   lv_obj_set_style_bg_color(navTrends_, lv_color_hex(page == 1 ? 0x159BDE : 0x111722), 0);
-  lv_obj_set_style_bg_color(navDevice_, lv_color_hex(page == 2 ? 0x159BDE : 0x111722), 0);
+  lv_obj_set_style_bg_color(navRecord_, lv_color_hex(page == 2 ? 0x159BDE : 0x111722), 0);
+  lv_obj_set_style_bg_color(navDevice_, lv_color_hex(page == 3 ? 0x159BDE : 0x111722), 0);
+}
+
+bool UiManager::takeRecordingToggleRequest() {
+  const bool pending = recordingTogglePending_;
+  recordingTogglePending_ = false;
+  return pending;
+}
+
+bool UiManager::takeFilteringModeRequest(FilteringMode &mode) {
+  const bool pending = filteringModePending_;
+  if (pending) {
+    mode = pendingFilteringMode_;
+  }
+  filteringModePending_ = false;
+  return pending;
 }
 
 void UiManager::setDisplayOn(bool on) {

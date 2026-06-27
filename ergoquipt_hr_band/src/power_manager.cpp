@@ -8,6 +8,7 @@ constexpr uint8_t kTcaInputReg = 0x00;
 constexpr uint8_t kTcaOutputReg = 0x01;
 constexpr uint8_t kTcaConfigReg = 0x03;
 constexpr uint32_t kBootDebounceMs = 60;
+constexpr uint32_t kExpanderDebounceMs = 60;
 
 }  // namespace
 
@@ -60,8 +61,9 @@ bool PowerManager::initPmu() {
     power_.enableSystemVoltageMeasure();
     power_.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ |
                      XPOWERS_AXP2101_PKEY_LONG_IRQ);
-    power_.setLongPressPowerOFF();
-    power_.enableLongPressShutdown();
+    power_.setPowerKeyPressOnTime(XPOWERS_POWERON_1S);
+    power_.setPowerKeyPressOffTime(XPOWERS_POWEROFF_6S);
+    power_.disableLongPressShutdown();
   }
   if (g_i2cMutex != nullptr) {
     xSemaphoreGive(g_i2cMutex);
@@ -73,6 +75,7 @@ void PowerManager::poll() {
   const uint32_t nowMs = millis();
   pollPmuIrq();
   pollBootButton(nowMs);
+  pollExpanderPowerButton(nowMs);
   if ((nowMs - lastBatteryPollMs_) >= cfg::kBatteryPollPeriodMs) {
     updateBattery(nowMs);
   }
@@ -116,6 +119,36 @@ void PowerManager::pollBootButton(uint32_t nowMs) {
     if (!pressed) {
       bootPressPending_ = true;
     }
+  }
+}
+
+void PowerManager::pollExpanderPowerButton(uint32_t nowMs) {
+  if (!expanderReady_) {
+    return;
+  }
+
+  bool high = false;
+  if (!expanderDigitalRead(cfg::kExpanderPowerButtonPin, high)) {
+    return;
+  }
+
+  const bool pressed = high;
+  if (pressed != expanderPowerWasPressed_ &&
+      (nowMs - lastExpanderEdgeMs_) >= kExpanderDebounceMs) {
+    lastExpanderEdgeMs_ = nowMs;
+    expanderPowerWasPressed_ = pressed;
+    if (pressed) {
+      expanderPressStartMs_ = nowMs;
+      expanderLongReported_ = false;
+    } else if (!expanderLongReported_) {
+      shortPressPending_ = true;
+    }
+  }
+
+  if (pressed && !expanderLongReported_ &&
+      (nowMs - expanderPressStartMs_) >= cfg::kSoftSleepLongPressMs) {
+    expanderLongReported_ = true;
+    longPressPending_ = true;
   }
 }
 
